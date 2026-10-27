@@ -1,22 +1,27 @@
 import logging
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 from config import TELEGRAM_TOKEN
-from handlers import diary
+from handlers import menu, entry, routines, publish, info
+from db import db
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
+db.init()
+
+def main():
+    if not TELEGRAM_TOKEN:
+        raise SystemExit("TELEGRAM_TOKEN missing")
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", menu.start))
+    app.add_handler(CommandHandler(["id", "ids", "chatid"], info.get_chat_ids))
+
+    app.add_handler(entry.conv)
+    app.add_handler(routines.conv)
+    app.add_handler(publish.conv)
+    app.add_handler(CallbackQueryHandler(menu.cb, pattern="^menu$"))
+    app.add_handler(CallbackQueryHandler(charts.cb, pattern="^charts:"))
+
+    app.run_polling()
 
 if __name__ == '__main__':
-    if not TELEGRAM_TOKEN:
-        raise ValueError("TELEGRAM_TOKEN не найден в .env")
-    
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", diary.start))
-    app.add_handler(diary.conv_handler)
-    app.add_handler(CallbackQueryHandler(diary.button_handler, pattern="^(view_week|chart_mood|chart_sleep)$"))
-    
-    print("Бот запущен...")
-    app.run_polling()
+    main()
