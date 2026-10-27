@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  diary-bot:
+    build: .
+    container_name: diary-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+      - ./assets:/app/assets
+    environment:
+      - DB_PATH=/data/diary.db
+      - TZ=${TZ:-Europe/Moscow}

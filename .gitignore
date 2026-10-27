@@ -1,0 +1,5 @@
+data/
+assets/*.png
+.env
+__pycache__/
+*.pyc
