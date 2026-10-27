@@ -1,7 +1,7 @@
 import logging
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 from config import TELEGRAM_TOKEN
-from handlers import menu, entry, routines, publish, info
+from handlers import diary, info
 from db import db
 
 logging.basicConfig(level=logging.INFO)
@@ -12,18 +12,9 @@ def main():
         raise SystemExit("TELEGRAM_TOKEN missing")
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", menu.start))
+    app.add_handler(CommandHandler("start", diary.start))
     app.add_handler(CommandHandler(["id", "ids", "chatid"], info.get_chat_ids))
-
-    app.add_handler(entry.conv)
-    app.add_handler(routines.conv)
-    app.add_handler(publish.conv)
-    app.add_handler(CallbackQueryHandler(menu.cb, pattern="^menu$"))
-    try:
-        from handlers import charts
-        app.add_handler(CallbackQueryHandler(charts.cb, pattern="^charts:"))
-    except Exception:
-        pass
+    app.add_handler(diary.conv_handler)
 
     app.run_polling()
 
