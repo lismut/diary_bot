@@ -18,6 +18,17 @@ TOPIC_ROUTINES_ID = os.getenv("TOPIC_ROUTINES_ID") or None
 
 PROTEIN_TARGET_G = float(os.getenv("PROTEIN_TARGET_G", "150"))
 
+# Доступ по user_id
+ALLOWED_USER_IDS_STR = os.getenv("ALLOWED_USER_IDS", "")
+ALLOWED_USERS = set()
+for x in ALLOWED_USER_IDS_STR.split(","):
+    x = x.strip()
+    if x:
+        try:
+            ALLOWED_USERS.add(int(x))
+        except ValueError:
+            pass
+
 # Конфиг продуктов и белка на 100 г
 PROTEIN_TABLE = {
     "курица": 23.0,

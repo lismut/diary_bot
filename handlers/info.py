@@ -14,21 +14,17 @@ async def get_chat_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"💬 ID чата: {chat.id}")
     lines.append(f"ℹ️ Тип чата: {chat.type}")
 
-    # Личный чат
     if chat.type == "private":
         lines.append("")
         lines.append("Это личный чат с ботом.")
-        lines.append("Его ID можно использовать как референс, но для сводки в топики нужен ID супергруппы-форума.")
         await msg.reply_text("\n".join(lines))
         return
 
-    # Форум/супергруппа
     if getattr(chat, "is_forum", False):
         lines.append("📌 Это чат с включёнными топиками (форум).")
     else:
         lines.append("📌 Обычная супергруппа/группа.")
 
-    # ID топика
     thread_id = getattr(msg, "message_thread_id", None)
     if thread_id:
         lines.append("")
@@ -38,7 +34,6 @@ async def get_chat_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
         lines.append("🧵 message_thread_id не найден.")
         lines.append("Если это форум — напиши команду /id ПРЯМО внутри нужного топика.")
-        lines.append("Если написал в 'Общий' (General) раздел форума — там его нет.")
 
     lines.append("")
     lines.append("Для .env:")

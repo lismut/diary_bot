@@ -19,7 +19,11 @@ def main():
     app.add_handler(routines.conv)
     app.add_handler(publish.conv)
     app.add_handler(CallbackQueryHandler(menu.cb, pattern="^menu$"))
-    app.add_handler(CallbackQueryHandler(charts.cb, pattern="^charts:"))
+    try:
+        from handlers import charts
+        app.add_handler(CallbackQueryHandler(charts.cb, pattern="^charts:"))
+    except Exception:
+        pass
 
     app.run_polling()
 
