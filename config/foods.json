@@ -1,0 +1,15 @@
+{
+  "products": {
+    "куриная грудка": {"protein_per_100g": 23.1},
+    "говядина": {"protein_per_100g": 18.9},
+    "рыба": {"protein_per_100g": 20.0},
+    "яйцо": {"protein_per_100g": 12.7},
+    "творог": {"protein_per_100g": 18.0},
+    "гречка": {"protein_per_100g": 12.6},
+    "рис": {"protein_per_100g": 7.0},
+    "овсянка": {"protein_per_100g": 12.3},
+    "молоко": {"protein_per_100g": 3.2},
+    "протеин": {"protein_per_100g": 80.0},
+    "орехи": {"protein_per_100g": 20.0}
+  }
+}
