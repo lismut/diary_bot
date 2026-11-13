@@ -1,123 +1,129 @@
+from datetime import date
+
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram import F
-from datetime import date, timedelta
+from aiogram.types import Message
+
+from src.config import settings
 from src.db.base import async_session
-from src.db import crud
-from src.utils.helpers import format_date_russian, get_date_from_text
+from src.db import crud, models
+from src.utils.helpers import format_date_ru
 
 router = Router()
 
 
+def build_summary(day: models.DayRecord) -> str:
+    t = f"📋 <b>Сводка за {format_date_ru(day.date)}</b>\n\n"
+
+    if day.wake_time or day.sleep_time or day.sleep_quality:
+        t += "😴 <b>Сон</b>\n"
+        if day.sleep_time:
+            t += f"  Засыпание: {day.sleep_time}\n"
+        if day.wake_time:
+            t += f"  Пробуждение: {day.wake_time}\n"
+        if day.sleep_hours:
+            t += f"  Длительность: {day.sleep_hours} ч\n"
+        if day.sleep_quality:
+            t += f"  Качество: {day.sleep_quality}/10\n"
+        t += "\n"
+
+    body = []
+    if day.weight:
+        body.append(f"⚖️ Вес: {day.weight} кг")
+    if day.resting_hr:
+        body.append(f"❤️ Пульс покоя: {day.resting_hr}")
+    if day.mood:
+        body.append(f"🙂 Настроение: {day.mood}/10")
+    if day.energy:
+        body.append(f"⚡ Самочувствие: {day.energy}/10")
+    if day.water_l:
+        body.append(f"💧 Вода: {day.water_l} л")
+    if day.steps:
+        body.append(f"👟 Шаги: {day.steps}")
+    if day.alcohol:
+        body.append("🍷 Был алкоголь")
+    if body:
+        t += "\n".join(body) + "\n\n"
+
+    if day.exercises:
+        t += "💪 <b>Тренировка</b>\n"
+        for e in day.exercises:
+            t += f"  • {e.detail or e.name}\n"
+        t += "\n"
+
+    if day.climbing_routes:
+        t += "🧗 <b>Скалодром</b>\n"
+        for r in day.climbing_routes:
+            t += f"  • {r.detail or (r.grade or 'трасса')}\n"
+        attempts = sum(r.attempts or 0 for r in day.climbing_routes)
+        if attempts:
+            t += f"  Всего попыток: {attempts}\n"
+        t += "\n"
+
+    if day.hangs:
+        t += "🤸 <b>Висы</b>\n"
+        for h in day.hangs:
+            t += f"  • {h.detail or (h.hold_size or '')}\n"
+        t += "\n"
+
+    if day.meals:
+        total = day.protein_total()
+        norm = settings.PROTEIN_NORM_PER_DAY
+        mark = "🟢" if total >= norm else "🟡"
+        t += f"🍽 <b>Питание</b> — белок {mark} <b>{total}г</b> / {norm}г\n"
+        for m in day.meals:
+            t += f"  • {m.food_name} {m.amount_grams:g}г (+{m.protein_g:g}г)\n"
+        t += "\n"
+
+    done = [r.routine_name for r in day.routines if r.completed]
+    if done:
+        t += "✅ <b>Добавки/рутины:</b> " + ", ".join(done) + "\n"
+
+    if day.notes:
+        t += f"\n📝 {day.notes}\n"
+
+    return t
+
+
 @router.message(Command("view"))
 async def cmd_view(message: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Сегодня", callback_data="view_today")],
-        [InlineKeyboardButton(text="Вчера", callback_data="view_yesterday")],
-        [InlineKeyboardButton(text="Указать дату", callback_data="view_custom")],
-    ])
-    await message.answer("Данные за какой день посмотреть?", reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("view_"))
-async def view_callback(callback: CallbackQuery):
-    today = date.today()
-    if callback.data == "view_today":
-        chosen_date = today
-    elif callback.data == "view_yesterday":
-        chosen_date = today - timedelta(days=1)
-    elif callback.data == "view_custom":
-        await callback.message.answer("Введи дату в формате ДД.ММ.ГГГГ или ДД.ММ")
-        return
-    else:
-        chosen_date = today
-    
+    args = message.text.split(maxsplit=1)
+    from src.utils.helpers import parse_date
     async with async_session() as session:
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-        result = await session.execute(select(crud.models.DayRecord).options(
-            selectinload(crud.models.DayRecord.exercises),
-            selectinload(crud.models.DayRecord.climbing_routes),
-            selectinload(crud.models.DayRecord.hangs),
-            selectinload(crud.models.DayRecord.meals),
-            selectinload(crud.models.DayRecord.routines)
-        ).where(crud.models.DayRecord.date == chosen_date))
-        day_record = result.scalar_one_or_none()
-    
-    if not day_record:
-        await callback.message.answer(f"За {format_date_russian(chosen_date)} нет записей")
-        await callback.answer()
+        if len(args) > 1:
+            d = parse_date(args[1]) or date.today()
+        else:
+            from src.handlers.common import get_active_date
+            d = await get_active_date(session)
+        day = await crud.get_day(session, d)
+    if not day:
+        await message.answer(f"За {format_date_ru(d)} нет записей.")
         return
-    
-    text = f"📋 <b>Дневник за {format_date_russian(chosen_date)}</b>\n\n"
-    
-    if day_record.wake_up_time or day_record.sleep_time or day_record.sleep_quality:
-        text += f"😴 <b>Сон</b>\n"
-        if day_record.wake_up_time:
-            text += f"  Пробуждение: {day_record.wake_up_time}\n"
-        if day_record.sleep_time:
-            text += f"  Засыпание: {day_record.sleep_time}\n"
-        if day_record.sleep_hours:
-            text += f"  Длительность: {day_record.sleep_hours} ч.\n"
-        if day_record.sleep_quality:
-            text += f"  Качество: {day_record.sleep_quality}/10\n"
-        text += "\n"
-    
-    if day_record.weight:
-        text += f"⚖️ <b>Вес:</b> {day_record.weight} кг\n\n"
-    
-    if day_record.steps:
-        text += f"👟 <b>Шаги:</b> {day_record.steps}\n\n"
-    
-    if day_record.exercises:
-        text += f"💪 <b>Тренировка</b>\n"
-        for ex in day_record.exercises:
-            line = f"  • {ex.name}"
-            if ex.sets and ex.reps:
-                line += f" {ex.sets}х{ex.reps}"
-            if ex.weight:
-                line += f" {ex.weight} кг"
-            text += line + "\n"
-        text += "\n"
-    
-    if day_record.climbing_routes:
-        text += f"🧗 <b>Скалодром</b>\n"
-        for route in day_record.climbing_routes:
-            line = f"  • {route.route_name or 'Трасса'}"
-            if route.grade:
-                line += f" [{route.grade}]"
-            if route.attempts:
-                line += f" попыток: {route.attempts}"
-            text += line + "\n"
-        text += "\n"
-    
-    if day_record.hangs:
-        text += f"🤸 <b>Висы</b>\n"
-        for hang in day_record.hangs:
-            line = f"  • Зацеп {hang.hold_size}"
-            if hang.weight:
-                line += f", {hang.weight} кг"
-            if hang.duration_seconds:
-                line += f", {hang.duration_seconds} сек"
-            if hang.sets:
-                line += f", {hang.sets} п."
-            text += line + "\n"
-        text += "\n"
-    
-    if day_record.meals:
-        total_protein = sum(m.protein_g for m in day_record.meals)
-        text += f"🍽 <b>Питание</b> (всего белка: {total_protein:.1f}г)\n"
-        for meal in day_record.meals:
-            text += f"  • {meal.food_name}: {meal.amount_grams}г (+{meal.protein_g:.1f}г)\n"
-        text += "\n"
-    
-    if day_record.routines:
-        text += f"✅ <b>Рутины/добавки</b>\n"
-        for r in day_record.routines:
-            status = "✓" if r.completed else "✗"
-            text += f"  {status} {r.routine_name}\n"
-        text += "\n"
-    
-    await callback.message.answer(text, parse_mode='HTML')
-    await callback.answer()
+    await message.answer(build_summary(day), parse_mode="HTML")
+
+
+@router.message(Command("last"))
+async def cmd_last(message: Message):
+    async with async_session() as session:
+        days = await crud.list_days(session, limit=15)
+    if not days:
+        await message.answer("Записей пока нет.")
+        return
+    t = "🗓 <b>Последние дни с записями</b>\n\n"
+    for d in days:
+        parts = []
+        if d.weight:
+            parts.append(f"{d.weight}кг")
+        if d.sleep_hours:
+            parts.append(f"{d.sleep_hours}ч")
+        if d.steps:
+            parts.append(f"{d.steps}ш")
+        if d.meals:
+            parts.append(f"{d.protein_total()}г белка")
+        n = len(d.log_lines)
+        t += f"• <b>{format_date_ru(d.date)}</b> — {n} строк"
+        if parts:
+            t += " (" + ", ".join(parts) + ")"
+        t += "\n"
+    t += "\nСмотреть день: /view 05.11"
+    await message.answer(t, parse_mode="HTML")

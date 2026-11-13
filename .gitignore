@@ -30,3 +30,4 @@ venv.bak/
 *.sqlite3
 logs/
 data/
+diary

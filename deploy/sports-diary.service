@@ -1,0 +1,17 @@
+[Unit]
+Description=Sports Diary Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Поменяй пользователя и путь под себя
+User=www-data
+WorkingDirectory=/opt/sports-diary
+EnvironmentFile=/opt/sports-diary/.env
+ExecStart=/opt/sports-diary/venv/bin/python /opt/sports-diary/run.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

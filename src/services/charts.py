@@ -1,151 +1,224 @@
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
 import io
-from datetime import date, timedelta
-from typing import List
-import numpy as np
+from datetime import date
+from typing import Optional
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+
+from src.config import settings
 from src.db import models
+
+plt.rcParams["font.family"] = "DejaVu Sans"
+plt.rcParams["axes.unicode_minus"] = False
+
+GREEN = "#2e9e4f"
+YELLOW = "#e0b400"
+RED = "#d64545"
+BLUE = "#3b78c3"
+ORANGE = "#e08a2b"
+PURPLE = "#8a5cc3"
+
+
+def _to_buf(fig: Figure) -> io.BytesIO:
+    buf = io.BytesIO()
+    fig.tight_layout()
+    fig.savefig(buf, format="png", dpi=110)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+def _dates_labels(days: list[date], rotation: int = 45):
+    return [d.strftime("%d.%m") for d in days]
 
 
 class ChartService:
+
     @staticmethod
-    def plot_weight(days: List[models.DayRecord]):
-        dates = []
-        weights = []
-        for d in sorted(days, key=lambda x: x.date):
-            if d.weight is not None:
-                dates.append(d.date)
-                weights.append(d.weight)
-        
-        if not weights:
+    def weight(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        ds = [(d.date, d.weight) for d in days if d.weight is not None]
+        if not ds:
             return None
-        
+        dates, vals = zip(*ds)
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(dates, weights, marker='o', linewidth=2, markersize=6)
-        ax.set_title('Динамика веса', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Дата')
-        ax.set_ylabel('Вес, кг')
+        ax.plot(dates, vals, marker="o", linewidth=2, color=BLUE)
+        ax.set_title("Динамика веса", fontweight="bold")
+        ax.set_ylabel("кг")
         ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
-    
+        ax.tick_params(axis="x", rotation=45)
+        if len(vals) > 1:
+            ax.axhline(sum(vals) / len(vals), color="gray", ls="--", alpha=0.6, label="среднее")
+            ax.legend()
+        return _to_buf(fig)
+
     @staticmethod
-    def plot_sleep(days: List[models.DayRecord]):
-        dates = []
-        hours = []
-        for d in sorted(days, key=lambda x: x.date):
-            if d.sleep_hours is not None:
-                dates.append(d.date)
-                hours.append(d.sleep_hours)
-        
-        if not hours:
+    def sleep_hours(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        ds = [(d.date, d.sleep_hours) for d in days if d.sleep_hours is not None]
+        if not ds:
             return None
-        
+        dates, vals = zip(*ds)
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(dates, hours, marker='s', linewidth=2, markersize=6, color='purple')
-        ax.set_title('Продолжительность сна', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Дата')
-        ax.set_ylabel('Часы')
-        ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
-    
-    @staticmethod
-    def plot_protein(days: List[models.DayRecord]):
-        dates = []
-        proteins = []
-        for d in sorted(days, key=lambda x: x.date):
-            total = sum(m.protein_g for m in d.meals) if d.meals else 0
-            if total > 0 or len([x for x in days if x.meals]) > 0:
-                dates.append(d.date)
-                proteins.append(total)
-        
-        if not dates:
-            return None
-        
-        fig, ax = plt.subplots(figsize=(10, 5))
-        bars = ax.bar(range(len(dates)), proteins, color=['green' if p >= 120 else 'yellow' for p in proteins])
-        ax.set_title('Потребление белка по дням', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Дата')
-        ax.set_ylabel('Белок, г')
-        ax.set_xticks(range(len(dates)))
-        ax.set_xticklabels([d.strftime('%d.%m') for d in dates], rotation=45)
-        ax.axhline(y=120, color='red', linestyle='--', label='Норма 120г')
+        ax.bar(dates, vals, color=PURPLE)
+        ax.axhline(7, color=RED, ls="--", alpha=0.7, label="норма 7ч")
+        ax.set_title("Продолжительность сна", fontweight="bold")
+        ax.set_ylabel("часы")
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.tick_params(axis="x", rotation=45)
         ax.legend()
-        ax.grid(True, alpha=0.3, axis='y')
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
-    
+        return _to_buf(fig)
+
     @staticmethod
-    def plot_climbing_volume(days: List[models.DayRecord]):
-        dates = []
-        counts = []
-        for d in sorted(days, key=lambda x: x.date):
-            total = sum(r.attempts or 0 for r in d.climbing_routes) if d.climbing_routes else 0
-            if total > 0 or d.climbing_routes:
-                dates.append(d.date)
-                counts.append(total)
-        
-        if not dates:
+    def sleep_quality(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        ds = [(d.date, d.sleep_quality) for d in days if d.sleep_quality is not None]
+        if not ds:
             return None
-        
+        dates, vals = zip(*ds)
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(dates, counts, marker='^', linewidth=2, markersize=6, color='orange')
-        ax.set_title('Объём лазания (попытки)', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Дата')
-        ax.set_ylabel('Попыток')
+        ax.plot(dates, vals, marker="s", linewidth=2, color=PURPLE)
+        ax.set_ylim(0, 10)
+        ax.set_title("Качество сна", fontweight="bold")
+        ax.set_ylabel("баллы (1-10)")
         ax.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
-    
+        ax.tick_params(axis="x", rotation=45)
+        return _to_buf(fig)
+
     @staticmethod
-    def plot_steps(days: List[models.DayRecord]):
-        dates = []
-        steps_list = []
-        for d in sorted(days, key=lambda x: x.date):
-            if d.steps is not None:
-                dates.append(d.date)
-                steps_list.append(d.steps)
-        
-        if not steps_list:
+    def protein(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        norm = settings.PROTEIN_NORM_PER_DAY
+        ds = [(d.date, d.protein_total()) for d in days if d.meals]
+        if not ds:
             return None
-        
+        dates, vals = zip(*ds)
+        colors = [GREEN if v >= norm else YELLOW for v in vals]
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.bar(dates, steps_list, color='teal')
-        ax.set_title('Шаги за день', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Дата')
-        ax.set_ylabel('Шагов')
-        ax.grid(True, alpha=0.3, axis='y')
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
-        buf.seek(0)
-        plt.close()
-        return buf
+        ax.bar(dates, vals, color=colors)
+        ax.axhline(norm, color=RED, ls="--", label=f"норма {norm}г")
+        ax.set_title("Белок по дням", fontweight="bold")
+        ax.set_ylabel("г")
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.tick_params(axis="x", rotation=45)
+        ax.legend()
+        return _to_buf(fig)
+
+    @staticmethod
+    def steps(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        ds = [(d.date, d.steps) for d in days if d.steps is not None]
+        if not ds:
+            return None
+        dates, vals = zip(*ds)
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.bar(dates, vals, color="#2a9d8f")
+        ax.set_title("Шаги по дням", fontweight="bold")
+        ax.set_ylabel("шагов")
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.tick_params(axis="x", rotation=45)
+        return _to_buf(fig)
+
+    @staticmethod
+    def climbing(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        data = []
+        for d in days:
+            attempts = sum(r.attempts or 0 for r in d.climbing_routes)
+            routes = sum(r.count or 0 for r in d.climbing_routes)
+            if d.climbing_routes:
+                data.append((d.date, attempts, routes))
+        if not data:
+            return None
+        dates = [x[0] for x in data]
+        attempts = [x[1] for x in data]
+        routes = [x[2] for x in data]
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.bar(dates, attempts, color=ORANGE, label="попытки")
+        ax.plot(dates, routes, marker="o", color=BLUE, label="пройдено трасс")
+        ax.set_title("Объём лазания", fontweight="bold")
+        ax.set_ylabel("количество")
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.tick_params(axis="x", rotation=45)
+        ax.legend()
+        return _to_buf(fig)
+
+    @staticmethod
+    def climbing_by_grade(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        by_grade: dict[str, int] = {}
+        for d in days:
+            for r in d.climbing_routes:
+                if r.grade:
+                    by_grade[r.grade] = by_grade.get(r.grade, 0) + (r.count or 1)
+        if not by_grade:
+            return None
+        grades = sorted(by_grade.keys())
+        vals = [by_grade[g] for g in grades]
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.bar(grades, vals, color=ORANGE)
+        ax.set_title("Трассы по категориям", fontweight="bold")
+        ax.set_ylabel("шт")
+        ax.grid(True, alpha=0.3, axis="y")
+        return _to_buf(fig)
+
+    @staticmethod
+    def hangs(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        data = []
+        for d in days:
+            if not d.hangs:
+                continue
+            max_w = max((h.added_weight or 0) for h in d.hangs)
+            minutes = sum(h.total_time_min or 0 for h in d.hangs)
+            data.append((d.date, max_w, minutes))
+        if not data:
+            return None
+        dates = [x[0] for x in data]
+        weights = [x[1] for x in data]
+        minutes = [x[2] for x in data]
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(dates, weights, marker="o", color=RED, label="макс. отягощение, кг")
+        ax.set_ylabel("кг", color=RED)
+        ax.tick_params(axis="y", labelcolor=RED)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(axis="x", rotation=45)
+        ax2 = ax.twinx()
+        ax2.bar(dates, minutes, alpha=0.25, color=BLUE, label="время, мин")
+        ax2.set_ylabel("мин", color=BLUE)
+        ax2.tick_params(axis="y", labelcolor=BLUE)
+        ax.set_title("Прогресс висов на зацепках", fontweight="bold")
+        return _to_buf(fig)
+
+    @staticmethod
+    def routines(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        totals: dict[str, int] = {}
+        counts: dict[str, int] = {}
+        for d in days:
+            for r in d.routines:
+                if r.completed:
+                    counts[r.routine_name] = counts.get(r.routine_name, 0) + 1
+        n_days = len([d for d in days if d.routines]) or 1
+        if not counts:
+            return None
+        names = sorted(counts.keys())
+        pct = [100 * counts[n] / n_days for n in names]
+        fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(names) + 2)))
+        ax.barh(names, pct, color=GREEN)
+        ax.set_xlim(0, 100)
+        ax.set_xlabel("% дней")
+        ax.set_title("Регулярность добавок и рутин", fontweight="bold")
+        ax.grid(True, alpha=0.3, axis="x")
+        return _to_buf(fig)
+
+    @staticmethod
+    def training_activity(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        if not days:
+            return None
+        dates, vals = [], []
+        for d in days:
+            active = bool(d.exercises or d.climbing_routes or d.hangs)
+            vals.append(1 if active else 0)
+            dates.append(d.date)
+        if not any(vals):
+            return None
+        fig, ax = plt.subplots(figsize=(10, 3))
+        ax.bar(dates, vals, color=[GREEN if v else "#dddddd" for v in vals])
+        ax.set_yticks([])
+        ax.set_title("Дни с тренировкой", fontweight="bold")
+        ax.tick_params(axis="x", rotation=45)
+        return _to_buf(fig)

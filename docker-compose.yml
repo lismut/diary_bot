@@ -1,15 +1,15 @@
-version: '3.8'
-
 services:
   bot:
     build: .
+    image: sports-diary-bot
     container_name: sports_diary_bot
     restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data        # база данных (сохраняется между перезапусками)
       - ./logs:/app/logs
-      - ./config:/app/config
+      - ./config:/app/config    # продукты и рутины (можно править без пересборки)
     environment:
       - PYTHONPATH=/app
+      - AUTO_IMPORT=true

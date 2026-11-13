@@ -1,65 +1,93 @@
-from aiogram import Router, F
+from aiogram import Router
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
-from src.config import settings
+
+from src.handlers import common
 
 router = Router()
 
+HELP = (
+    "🏋️ <b>Спортивный дневник</b>\n\n"
+    "Записывай данные кнопками внизу. Всё сохраняется за активный день "
+    "и раскладывается в отчётный чат по темам.\n\n"
+    "<b>Кнопки:</b>\n"
+    "😴 Сон — пробуждение, засыпание, качество 1–10\n"
+    "⚖️ Вес — утренний вес\n"
+    "💪 Тренировка — упражнения и бассейн\n"
+    "🧗 Лазание — категории, трассы, попытки\n"
+    "🤸 Висы — зацепки и отягощение\n"
+    "🍽 Питание — продукты, белок считается сам\n"
+    "💊 Добавки — креатин, коллаген и др. (тумблеры)\n"
+    "👟 Шаги\n"
+    "📋 Сводка дня · 📊 Статистика · 📤 В отчёт · 📅 День\n\n"
+    "<b>Можно и просто писать строками:</b>\n"
+    "<code>7:30</code> — пробуждение\n"
+    "<code>Сон 7/10</code> — качество сна\n"
+    "<code>78.1</code> — вес\n"
+    "<code>Сон 00:30</code> — время засыпания\n"
+    "<code>Творог 250г, кешью 20г</code> — еда (посчитаю белок)\n"
+    "<code>Велик 30мин</code>, <code>Лфк с резинкой</code> — тренировка\n"
+    "<code>5 6а, 4 6б, 6с флеш</code> — скалодром\n"
+    "<code>Висы 10мм 10кг 5х10/50</code> — висы на зацепках\n"
+    "<code>Шаги 15к</code> — шаги\n"
+    "<code>Креатин, коллаген</code> — добавки\n"
+    "<code>Басс 1 час</code> — бассейн\n"
+    "<code>Настроение 8/10</code>, <code>Пульс 55</code>, <code>Вода 2л</code> — доп. метрики\n\n"
+    "<b>Команды:</b>\n"
+    "/menu — показать меню\n"
+    "/day — какой день активен (сменить: <code>/day 05.11</code>)\n"
+    "/today — вернуться к сегодняшнему дню\n"
+    "/log — список строк активного дня\n"
+    "/del N — удалить строку №N\n"
+    "/undo — удалить последнюю строку\n"
+    "/view — сводка за день\n"
+    "/last — последние дни с записями\n"
+    "/stats — графики и аналитика\n"
+    "/publish — выложить графики в отчётный чат\n"
+    "/report — отправить сводку дня в отчётный чат\n"
+    "/get_chat_info — узнать ID чата и топика\n"
+)
+
 
 @router.message(CommandStart())
-async def cmd_start(message: Message):
-    await message.answer(
-        "🏋️ <b>Спортивный дневник</b>\n\n"
-        "Я буду помогать вести твой спортивный дневник.\n\n"
-        "<b>Команды:</b>\n"
-        "/add - Добавить данные за день\n"
-        "/edit - Редактировать данные за день\n"
-        "/view - Просмотреть данные за день\n"
-        "/stats - Статистика и графики\n"
-        "/get_chat_info - Узнать ID чатов и топиков\n"
-        "/help - Справка",
-        parse_mode='HTML'
-    )
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(HELP, parse_mode="HTML", reply_markup=common.main_keyboard())
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
-    await message.answer(
-        "<b>Как пользоваться:</b>\n\n"
-        "1. <b>/add</b> - пошаговый ввод данных за выбранный день\n"
-        "2. <b>/edit</b> - изменить уже введенные данные\n"
-        "3. <b>/view</b> - посмотреть что записано за день\n"
-        "4. <b>/stats</b> - графики и аналитика за неделю/месяц/год\n"
-        "5. <b>/get_chat_info</b> - получить ID текущего чата, форума и топиков\n\n"
-        "Бот будет автоматически постить отчеты в настроенный отчетный чат по топикам.",
-        parse_mode='HTML'
-    )
+    await message.answer(HELP, parse_mode="HTML", reply_markup=common.main_keyboard())
 
 
-@router.message(Command("get_chat_info"))
+@router.message(Command("get_chat_info", "id", "chatid"))
 async def cmd_get_chat_info(message: Message):
     chat = message.chat
     thread_id = message.message_thread_id
-    
-    info = f"ℹ️ <b>Информация о чате</b>\n\n"
-    info += f"<b>ID чата:</b> <code>{chat.id}</code>\n"
-    info += f"<b>Тип чата:</b> {chat.type}\n"
+
+    lines = ["ℹ️ <b>Информация о чате</b>\n"]
+    lines.append(f"<b>ID чата:</b> <code>{chat.id}</code>")
+    lines.append(f"<b>Тип:</b> {chat.type}")
     if chat.title:
-        info += f"<b>Название:</b> {chat.title}\n"
+        lines.append(f"<b>Название:</b> {chat.title}")
+    if getattr(chat, "is_forum", False):
+        lines.append("<b>Форум:</b> да")
     if thread_id:
-        info += f"<b>ID топика (thread_id):</b> <code>{thread_id}</code>\n"
-        info += f"<b>Топик:</b> Да (форум)\n"
+        lines.append(f"<b>ID топика (thread_id):</b> <code>{thread_id}</code>")
     else:
-        info += f"<b>Топик:</b> Нет\n"
-    
-    info += f"\n<b>Для настройки в .env:</b>\n"
-    if chat.type == 'private':
-        info += f"MAIN_CHAT_ID={chat.id}\n"
-    elif chat.type in ['group', 'supergroup']:
+        lines.append("<b>Топик:</b> нет")
+
+    lines.append("\n<b>Что прописать в .env:</b>")
+    if chat.type == "private":
+        lines.append(f"<code>MAIN_CHAT_ID={chat.id}</code>")
+    else:
+        lines.append(f"<code>REPORT_CHAT_ID={chat.id}</code>")
         if thread_id:
-            info += f"REPORT_CHAT_ID={chat.id}\n"
-            info += f"# Текущий топик - добавь в соответствующий TOPIC_*_ID\n"
-        else:
-            info += f"REPORT_CHAT_ID={chat.id}\n"
-    
-    await message.answer(info, parse_mode='HTML')
+            lines.append("А это — ID топика, вставь в нужный <code>TOPIC_*_ID</code>:")
+            lines.append(f"<code>{thread_id}</code>")
+
+    lines.append(f"\n<b>Ваш user_id:</b> <code>{message.from_user.id}</code>")
+    lines.append("<code>ADMIN_IDS=" + str(message.from_user.id) + "</code>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
