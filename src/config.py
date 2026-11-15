@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     TOPIC_STEPS_ID: Optional[int] = None
     TOPIC_NUTRITION_ID: Optional[int] = None
     TOPIC_ROUTINES_ID: Optional[int] = None
+    TOPIC_LFK_ID: Optional[int] = None
     TOPIC_ANALYTICS_ID: Optional[int] = None
 
     # База
@@ -47,12 +48,13 @@ class Settings(BaseSettings):
     AUTO_REPORT: bool = True                     # автоотчёт за прошедший день
     REPORT_HOUR: int = 9                         # во сколько постить
     REPORT_MINUTE: int = 0
+    REPORT_SEND_INTERVAL: float = 3.0            # пауза между сообщениями в отчётный чат, сек
 
     @field_validator(
         "MAIN_CHAT_ID", "REPORT_CHAT_ID",
         "TOPIC_DIARY_ID", "TOPIC_SLEEP_ID", "TOPIC_WEIGHT_ID", "TOPIC_TRAINING_ID",
         "TOPIC_CLIMBING_ID", "TOPIC_HANGS_ID", "TOPIC_STEPS_ID", "TOPIC_NUTRITION_ID",
-        "TOPIC_ROUTINES_ID", "TOPIC_ANALYTICS_ID",
+        "TOPIC_ROUTINES_ID", "TOPIC_LFK_ID", "TOPIC_ANALYTICS_ID",
         mode="before",
     )
     @classmethod
@@ -85,8 +87,25 @@ class Settings(BaseSettings):
             "hang": self.TOPIC_HANGS_ID,
             "supplement": self.TOPIC_ROUTINES_ID,
             "routines": self.TOPIC_ROUTINES_ID,
+            "lfk": self.TOPIC_LFK_ID,
             "analytics": self.TOPIC_ANALYTICS_ID,
         }.get(category)
+
+    def topic_for_section(self, section: str) -> Optional[int]:
+        """Топик отчётного чата для раздела дневника."""
+        return {
+            "diary": self.TOPIC_DIARY_ID,
+            "sleep": self.TOPIC_SLEEP_ID,
+            "weight": self.TOPIC_WEIGHT_ID,
+            "steps": self.TOPIC_STEPS_ID,
+            "nutrition": self.TOPIC_NUTRITION_ID,
+            "training": self.TOPIC_TRAINING_ID,
+            "climbing": self.TOPIC_CLIMBING_ID,
+            "hangs": self.TOPIC_HANGS_ID,
+            "routines": self.TOPIC_ROUTINES_ID,
+            "lfk": self.TOPIC_LFK_ID,
+            "analytics": self.TOPIC_ANALYTICS_ID,
+        }.get(section)
 
 
 settings = Settings()

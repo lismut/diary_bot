@@ -14,4 +14,5 @@ class EntryStates(StatesGroup):
     hang_weight = State()
     hang_text = State()
     food = State()
+    lfk = State()
     day_input = State()

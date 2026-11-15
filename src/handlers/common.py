@@ -12,6 +12,7 @@ from src.config import settings
 from src.db.base import async_session
 from src.db import crud
 from src.services import parser as P
+from src.services import sections
 from src.services.reporter import ReportService
 from src.utils.helpers import format_date_ru
 
@@ -28,6 +29,7 @@ BTN_HANG = "🤸 Висы"
 BTN_FOOD = "🍽 Питание"
 BTN_SUPP = "💊 Добавки"
 BTN_STEPS = "👟 Шаги"
+BTN_LFK = "🤸‍♂️ ЛФК"
 BTN_SUMMARY = "📋 Сводка дня"
 BTN_STATS = "📊 Статистика"
 BTN_REPORT = "📤 В отчёт"
@@ -35,7 +37,7 @@ BTN_DAY = "📅 День"
 
 MENU_TEXTS = {
     BTN_SLEEP, BTN_WEIGHT, BTN_TRAIN, BTN_CLIMB, BTN_HANG, BTN_FOOD,
-    BTN_SUPP, BTN_STEPS, BTN_SUMMARY, BTN_STATS, BTN_REPORT, BTN_DAY,
+    BTN_SUPP, BTN_STEPS, BTN_LFK, BTN_SUMMARY, BTN_STATS, BTN_REPORT, BTN_DAY,
 }
 
 
@@ -46,8 +48,9 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_TRAIN), KeyboardButton(text=BTN_CLIMB)],
             [KeyboardButton(text=BTN_HANG), KeyboardButton(text=BTN_FOOD)],
             [KeyboardButton(text=BTN_SUPP), KeyboardButton(text=BTN_STEPS)],
-            [KeyboardButton(text=BTN_SUMMARY), KeyboardButton(text=BTN_STATS)],
-            [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_DAY)],
+            [KeyboardButton(text=BTN_LFK), KeyboardButton(text=BTN_SUMMARY)],
+            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_REPORT)],
+            [KeyboardButton(text=BTN_DAY)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выбери раздел или просто напиши строку",
@@ -125,16 +128,11 @@ def confirmation(day_date: date, applied: list[P.ParsedLine]) -> str:
 
 
 async def add_items(bot, day_date: date, items: list[P.ParsedLine]) -> list[P.ParsedLine]:
-    """Применяет записи к дню и сразу выгружает их в отчётный чат."""
+    """Применяет записи к дню. Публикация в отчётный чат — отдельно,
+    по нажатию «Готово» в разделе (см. ReportService.publish_section)."""
     async with async_session() as session:
         day = await crud.get_or_create_day(session, day_date)
         applied = await crud.apply_parsed(session, day, items)
-        if applied and settings.REPORT_CHAT_ID:
-            day = await crud.get_day(session, day_date)
-            try:
-                await ReportService(bot).post_updates(day, applied)
-            except Exception as e:
-                logger.error("post_updates error: %s", e)
     return applied
 
 
@@ -149,3 +147,40 @@ async def report_active_day(bot, day_date: date) -> bool:
     except Exception as e:
         logger.error("post_day error: %s", e)
         return False
+
+
+async def publish_sections_for(bot, day_date: date, applied, always_diary: bool = False) -> None:
+    """Публикует/правит сообщения разделов, затронутых добавленными строками."""
+    if not settings.REPORT_CHAT_ID or not applied:
+        return
+    section_names: list[str] = ["diary"] if always_diary else []
+    for it in applied:
+        sec = sections.section_for_category(it.category)
+        if sec and sec not in section_names:
+            section_names.append(sec)
+    if not section_names:
+        return
+    async with async_session() as session:
+        day = await crud.get_day(session, day_date)
+    if not day:
+        return
+    rep = ReportService(bot)
+    for sec in section_names:
+        try:
+            await rep.publish_section(day, sec)
+        except Exception as e:  # noqa: BLE001
+            logger.error("publish_section %s error: %s", sec, e)
+
+
+async def publish_section(bot, day_date: date, section: str) -> None:
+    """Публикует/правит сообщение одного раздела."""
+    if not settings.REPORT_CHAT_ID or not section:
+        return
+    async with async_session() as session:
+        day = await crud.get_day(session, day_date)
+    if not day:
+        return
+    try:
+        await ReportService(bot).publish_section(day, section)
+    except Exception as e:  # noqa: BLE001
+        logger.error("publish_section %s error: %s", section, e)

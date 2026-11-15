@@ -1,6 +1,12 @@
-"""Кнопочный ввод данных: сон, вес, шаги, тренировка, лазание, висы, питание, добавки."""
+"""Кнопочный ввод данных: сон, вес, шаги, тренировка, лазание, висы, питание, добавки, ЛФК.
+
+Важно: пока пользователь находится в разделе, в отчётный чат ничего не уходит.
+Публикация происходит по кнопке «Готово» — тогда весь раздел уходит одним
+сообщением (при повторном «Готово» то же сообщение правится).
+"""
 from __future__ import annotations
 
+import html
 import logging
 import re
 
@@ -14,13 +20,14 @@ from aiogram.types import (
 from src.db.base import async_session
 from src.db import crud
 from src.services import parser as P
+from src.services import sections
+from src.services.reporter import ReportService
 from src.handlers import common
 from src.handlers.common import (
     BTN_SLEEP, BTN_WEIGHT, BTN_TRAIN, BTN_CLIMB, BTN_HANG, BTN_FOOD, BTN_SUPP, BTN_STEPS,
-    add_items, confirmation, active_day,
+    BTN_LFK, add_items, confirmation, active_day,
 )
 from src.handlers.states import EntryStates
-from src.utils.helpers import format_date_ru
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -37,23 +44,151 @@ def _cancel_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def _done_kb(extra: list[list[InlineKeyboardButton]] | None = None) -> InlineKeyboardMarkup:
-    rows = list(extra or [])
-    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="entry:done")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+async def _load_day(day_date):
+    async with async_session() as session:
+        return await crud.get_day(session, day_date)
 
 
-async def _confirm(bot, items, message: Message, extra_kb: InlineKeyboardMarkup | None = None):
-    day_date = await active_day()
+# --- ряды кнопок разделов ---
+def _train_rows() -> list[list[InlineKeyboardButton]]:
+    return [
+        [InlineKeyboardButton(text="🏊 Бассейн", callback_data="train:pool")],
+        [InlineKeyboardButton(text="✍️ Ввести упражнение", callback_data="train:add")],
+    ]
+
+
+def _climb_rows() -> list[list[InlineKeyboardButton]]:
+    rows = []
+    for i in range(0, len(GRADES), 3):
+        rows.append([InlineKeyboardButton(text=g, callback_data=f"climb:g:{g}") for g in GRADES[i:i + 3]])
+    rows.append([InlineKeyboardButton(text="✍️ Другое", callback_data="climb:other")])
+    return rows
+
+
+def _hang_rows() -> list[list[InlineKeyboardButton]]:
+    rows, row = [], []
+    for h in HOLDS:
+        row.append(InlineKeyboardButton(text=h, callback_data=f"hang:h:{h}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="✍️ Другое", callback_data="hang:other")])
+    return rows
+
+
+def _food_rows() -> list[list[InlineKeyboardButton]]:
+    rows, row = [], []
+    for name in QUICK_FOODS:
+        row.append(InlineKeyboardButton(text=name, callback_data=f"food:q:{name}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="✍️ Ввести", callback_data="food:add")])
+    return rows
+
+
+def _lfk_rows() -> list[list[InlineKeyboardButton]]:
+    return [[InlineKeyboardButton(text="✍️ Ввести упражнение", callback_data="lfk:add")]]
+
+
+_SECTION_INTRO = {
+    "training": "💪 <b>Тренировка</b>\nЗаписывай упражнения по одному или отметь бассейн.",
+    "climbing": "🧗 <b>Лазание</b>\nВыбери категорию или введи текстом.",
+    "hangs": "🤸 <b>Висы</b>\nВыбери зацепку или введи текстом.",
+    "nutrition": "🍽 <b>Питание</b>\nЖми продукт из списка или введи текстом — белок посчитаю сам.",
+    "lfk": "🤸‍♂️ <b>ЛФК</b>\nЗаписывай упражнения по одному.",
+    "routines": "💊 <b>Добавки и рутины</b>\nОтмечай нажатием.",
+}
+
+
+async def _section_ui(section: str, day_date) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    intro = _SECTION_INTRO.get(section, "")
+    if section == "training":
+        return intro, _train_rows()
+    if section == "climbing":
+        return intro, _climb_rows()
+    if section == "hangs":
+        return intro, _hang_rows()
+    if section == "nutrition":
+        return intro, _food_rows()
+    if section == "lfk":
+        return intro, _lfk_rows()
+    if section == "routines":
+        done = await _completed_names(day_date)
+        return intro, _supp_rows(done)
+    return intro, []
+
+
+async def _section_view(section: str, day_date, message: Message, edit: bool = False):
+    """Показывает текущее состояние раздела с кнопками и «Готово»."""
+    intro, action_rows = await _section_ui(section, day_date)
+    day = await _load_day(day_date)
+    lines = sections.section_log_lines(day, section) if day else []
+
+    text = intro
+    if section == "routines":
+        done = [r.routine_name for r in (day.routines if day else []) if r.completed]
+        text += "\n\n" + ("✅ " + ", ".join(done) if done else "<i>Пока пусто</i>")
+    elif lines:
+        text += "\n\n<b>Записано:</b>\n" + "\n".join(
+            f"{i}. {html.escape(ln.raw_text)}" for i, ln in enumerate(lines, 1))
+    else:
+        text += "\n\n<i>Пока пусто</i>"
+
+    rows = list(action_rows)
+    if section != "routines" and lines:
+        del_row: list[InlineKeyboardButton] = []
+        for i, ln in enumerate(lines, 1):
+            del_row.append(InlineKeyboardButton(
+                text=f"🗑 {i}", callback_data=f"entry:del:{section}:{ln.id}"))
+            if len(del_row) == 5:
+                rows.append(del_row)
+                del_row = []
+        if del_row:
+            rows.append(del_row)
+    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data=f"entry:done:{section}")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    if edit:
+        try:
+            await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+async def _add_to_section(bot, day_date, items, section: str, message: Message):
+    """Добавляет строки в раздел (без публикации) и перерисовывает раздел."""
+    applied = await add_items(bot, day_date, items)
+    if not applied:
+        await message.answer("Не понял, попробуй ещё раз.", reply_markup=_cancel_kb())
+        return
+    await _section_view(section, day_date, message)
+
+
+async def _apply_and_publish(bot, day_date, items, section: str, message: Message,
+                             extra_kb: InlineKeyboardMarkup | None = None):
+    """Для простых разделов (сон/вес/шаги): применяет и сразу публикует раздел."""
     applied = await add_items(bot, day_date, items)
     if not applied:
         await message.answer("Не получилось распознать, попробуй ещё раз.",
                              reply_markup=extra_kb or _cancel_kb())
         return
+    day = await _load_day(day_date)
+    if day:
+        try:
+            await ReportService(bot).publish_section(day, section)
+        except Exception as e:  # noqa: BLE001
+            logger.error("publish_section %s error: %s", section, e)
     await message.answer(confirmation(day_date, applied), parse_mode="HTML", reply_markup=extra_kb)
 
 
-# ---------------------------------------------------------------- отмена/готово
+# ---------------------------------------------------------------- отмена/готово/удаление
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
@@ -67,14 +202,37 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "entry:done")
+@router.callback_query(F.data.startswith("entry:done:"))
 async def cb_done(callback: CallbackQuery, state: FSMContext):
+    section = callback.data.split(":", 2)[2]
     await state.clear()
+    day_date = await active_day()
+    day = await _load_day(day_date)
+    if day:
+        try:
+            await ReportService(callback.bot).publish_section(day, section)
+        except Exception as e:  # noqa: BLE001
+            logger.error("publish_section %s error: %s", section, e)
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
     await callback.answer("Готово ✅")
+
+
+@router.callback_query(F.data.startswith("entry:del:"))
+async def cb_del(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    if len(parts) < 4 or not parts[3].isdigit():
+        await callback.answer("Не понял", show_alert=True)
+        return
+    section, line_id = parts[2], int(parts[3])
+    day_date = await active_day()
+    async with async_session() as session:
+        day = await crud.get_or_create_day(session, day_date)
+        await crud.delete_log_line_by_id(session, day, line_id)
+    await _section_view(section, day_date, callback.message, edit=True)
+    await callback.answer("Удалил")
 
 
 # ================================================================ СОН
@@ -127,7 +285,8 @@ async def cb_sleep_quality(callback: CallbackQuery, state: FSMContext):
 async def cb_sleep_q(callback: CallbackQuery, state: FSMContext):
     q = int(callback.data.split(":")[2])
     await state.clear()
-    await _confirm(callback.bot, [P.line_sleep_quality(q)], callback.message)
+    day_date = await active_day()
+    await _apply_and_publish(callback.bot, day_date, [P.line_sleep_quality(q)], "sleep", callback.message)
     await callback.answer("Записал")
 
 
@@ -142,7 +301,8 @@ async def on_sleep_time(message: Message, state: FSMContext):
         return
     items = [P.line_wake(t) if mode == "wake" else P.line_sleep_time(t)]
     await state.clear()
-    await _confirm(message.bot, items, message)
+    day_date = await active_day()
+    await _apply_and_publish(message.bot, day_date, items, "sleep", message)
 
 
 # ================================================================ ВЕС
@@ -162,7 +322,8 @@ async def on_weight(message: Message, state: FSMContext):
                              parse_mode="HTML", reply_markup=_cancel_kb())
         return
     await state.clear()
-    await _confirm(message.bot, [P.line_weight(w)], message)
+    day_date = await active_day()
+    await _apply_and_publish(message.bot, day_date, [P.line_weight(w)], "weight", message)
 
 
 # ================================================================ ШАГИ
@@ -182,29 +343,24 @@ async def on_steps(message: Message, state: FSMContext):
                              parse_mode="HTML", reply_markup=_cancel_kb())
         return
     await state.clear()
-    await _confirm(message.bot, [P.line_steps(s)], message)
+    day_date = await active_day()
+    await _apply_and_publish(message.bot, day_date, [P.line_steps(s)], "steps", message)
 
 
 # ================================================================ ТРЕНИРОВКА
-def _train_kb() -> InlineKeyboardMarkup:
-    return _done_kb([
-        [InlineKeyboardButton(text="🏊 Бассейн", callback_data="train:pool")],
-        [InlineKeyboardButton(text="✍️ Ввести упражнение", callback_data="train:add")],
-    ])
-
-
 @router.message(F.text == BTN_TRAIN)
 async def menu_train(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "💪 <b>Тренировка</b>\nЗаписывай упражнения по одному или отметь бассейн.",
-        reply_markup=_train_kb(), parse_mode="HTML")
+    day_date = await active_day()
+    await _section_view("training", day_date, message)
 
 
 @router.callback_query(F.data == "train:pool")
 async def cb_train_pool(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    day_date = await active_day()
     item = P.line_exercise_name("Бассейн")
-    await _confirm(callback.bot, [item], callback.message, extra_kb=_train_kb())
+    await _add_to_section(callback.bot, day_date, [item], "training", callback.message)
     await callback.answer("Бассейн записан")
 
 
@@ -212,30 +368,24 @@ async def cb_train_pool(callback: CallbackQuery, state: FSMContext):
 async def cb_train_add(callback: CallbackQuery, state: FSMContext):
     await state.set_state(EntryStates.exercise)
     await callback.message.answer(
-        "✍️ Напиши упражнение, напр. <code>Гиря вбок 3х3 12кг</code> или <code>Лфк с резинкой</code>",
+        "✍️ Напиши упражнение, напр. <code>Гиря вбок 3х3 12кг</code>",
         parse_mode="HTML", reply_markup=_cancel_kb())
     await callback.answer()
 
 
 @router.message(EntryStates.exercise, F.text)
 async def on_exercise(message: Message, state: FSMContext):
-    item = P.line_exercise(message.text)
-    await _confirm(message.bot, [item], message, extra_kb=_train_kb())
+    await state.clear()
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, [P.line_exercise(message.text)], "training", message)
 
 
 # ================================================================ ЛАЗАНИЕ
-def _climb_kb() -> InlineKeyboardMarkup:
-    rows = []
-    for i in range(0, len(GRADES), 3):
-        rows.append([InlineKeyboardButton(text=g, callback_data=f"climb:g:{g}") for g in GRADES[i:i + 3]])
-    rows.append([InlineKeyboardButton(text="✍️ Другое", callback_data="climb:other")])
-    return _done_kb(rows)
-
-
 @router.message(F.text == BTN_CLIMB)
 async def menu_climb(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("🧗 <b>Лазание</b>\nВыбери категорию:", reply_markup=_climb_kb(), parse_mode="HTML")
+    day_date = await active_day()
+    await _section_view("climbing", day_date, message)
 
 
 @router.callback_query(F.data.startswith("climb:g:"))
@@ -281,7 +431,8 @@ async def on_climb_count(message: Message, state: FSMContext):
         count = 1
     item = P.line_climb(grade, count, attempts, kind, f"{grade} {raw}")
     await state.clear()
-    await _confirm(message.bot, [item], message, extra_kb=_climb_kb())
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, [item], "climbing", message)
 
 
 @router.message(EntryStates.climb_text, F.text)
@@ -292,27 +443,16 @@ async def on_climb_text(message: Message, state: FSMContext):
                              parse_mode="HTML", reply_markup=_cancel_kb())
         return
     await state.clear()
-    await _confirm(message.bot, items, message, extra_kb=_climb_kb())
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, items, "climbing", message)
 
 
 # ================================================================ ВИСЫ
-def _hang_kb() -> InlineKeyboardMarkup:
-    rows, row = [], []
-    for h in HOLDS:
-        row.append(InlineKeyboardButton(text=h, callback_data=f"hang:h:{h}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="✍️ Другое", callback_data="hang:other")])
-    return _done_kb(rows)
-
-
 @router.message(F.text == BTN_HANG)
 async def menu_hang(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("🤸 <b>Висы</b>\nРазмер зацепки:", reply_markup=_hang_kb(), parse_mode="HTML")
+    day_date = await active_day()
+    await _section_view("hangs", day_date, message)
 
 
 @router.callback_query(F.data.startswith("hang:h:"))
@@ -343,7 +483,8 @@ async def on_hang_weight(message: Message, state: FSMContext):
     weight = float(m.group(1).replace(",", ".")) if m else None
     item = P.line_hang(hold, weight, f"Висы {hold} {message.text.strip()}")
     await state.clear()
-    await _confirm(message.bot, [item], message, extra_kb=_hang_kb())
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, [item], "hangs", message)
 
 
 @router.message(EntryStates.hang_text, F.text)
@@ -354,29 +495,16 @@ async def on_hang_text(message: Message, state: FSMContext):
                              parse_mode="HTML", reply_markup=_cancel_kb())
         return
     await state.clear()
-    await _confirm(message.bot, items, message, extra_kb=_hang_kb())
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, items, "hangs", message)
 
 
 # ================================================================ ПИТАНИЕ
-def _food_kb() -> InlineKeyboardMarkup:
-    rows, row = [], []
-    for name in QUICK_FOODS:
-        row.append(InlineKeyboardButton(text=name, callback_data=f"food:q:{name}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="✍️ Ввести", callback_data="food:add")])
-    return _done_kb(rows)
-
-
 @router.message(F.text == BTN_FOOD)
 async def menu_food(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "🍽 <b>Питание</b>\nЖми продукт из списка или введи текстом — белок посчитаю сам.",
-        reply_markup=_food_kb(), parse_mode="HTML")
+    day_date = await active_day()
+    await _section_view("nutrition", day_date, message)
 
 
 @router.callback_query(F.data.startswith("food:q:"))
@@ -386,7 +514,8 @@ async def cb_food_quick(callback: CallbackQuery, state: FSMContext):
     if not item:
         await callback.answer("Не нашёл продукт", show_alert=True)
         return
-    await _confirm(callback.bot, [item], callback.message, extra_kb=_food_kb())
+    day_date = await active_day()
+    await _add_to_section(callback.bot, day_date, [item], "nutrition", callback.message)
     await callback.answer("Записал")
 
 
@@ -407,11 +536,37 @@ async def on_food(message: Message, state: FSMContext):
             "Не нашёл продуктов. Попробуй иначе, напр. <code>Творог 250г</code>",
             parse_mode="HTML", reply_markup=_cancel_kb())
         return
-    await _confirm(message.bot, items, message, extra_kb=_food_kb())
+    await state.clear()
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, items, "nutrition", message)
+
+
+# ================================================================ ЛФК
+@router.message(F.text == BTN_LFK)
+async def menu_lfk(message: Message, state: FSMContext):
+    await state.clear()
+    day_date = await active_day()
+    await _section_view("lfk", day_date, message)
+
+
+@router.callback_query(F.data == "lfk:add")
+async def cb_lfk_add(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(EntryStates.lfk)
+    await callback.message.answer(
+        "✍️ Напиши упражнение ЛФК, напр. <code>Лфк с резинкой 3х15</code>",
+        parse_mode="HTML", reply_markup=_cancel_kb())
+    await callback.answer()
+
+
+@router.message(EntryStates.lfk, F.text)
+async def on_lfk(message: Message, state: FSMContext):
+    await state.clear()
+    day_date = await active_day()
+    await _add_to_section(message.bot, day_date, [P.line_lfk(message.text)], "lfk", message)
 
 
 # ================================================================ ДОБАВКИ
-def _supp_kb(done: set[str]) -> InlineKeyboardMarkup:
+def _supp_rows(done: set[str]) -> list[list[InlineKeyboardButton]]:
     rows: list[list[InlineKeyboardButton]] = []
 
     def add_names(names: list[str]):
@@ -430,8 +585,7 @@ def _supp_kb(done: set[str]) -> InlineKeyboardMarkup:
     if routines:
         rows.append([InlineKeyboardButton(text="— рутины —", callback_data="supp:noop")])
         add_names(routines)
-    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="entry:done")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return rows
 
 
 async def _completed_names(day_date) -> set[str]:
@@ -446,10 +600,7 @@ async def _completed_names(day_date) -> set[str]:
 async def menu_supp(message: Message, state: FSMContext):
     await state.clear()
     day_date = await active_day()
-    done = await _completed_names(day_date)
-    await message.answer(
-        f"💊 <b>Добавки и рутины</b> — {format_date_ru(day_date)}\nОтмечай нажатием:",
-        reply_markup=_supp_kb(done), parse_mode="HTML")
+    await _section_view("routines", day_date, message)
 
 
 @router.callback_query(F.data.startswith("supp:t:"))
@@ -459,12 +610,8 @@ async def cb_supp_toggle(callback: CallbackQuery, state: FSMContext):
     async with async_session() as session:
         day = await crud.get_or_create_day(session, day_date)
         await crud.toggle_routine(session, day, name)
-    done = await _completed_names(day_date)
-    try:
-        await callback.message.edit_reply_markup(reply_markup=_supp_kb(done))
-    except Exception:
-        pass
-    await callback.answer("Отмечено ✅" if name in done else "Снято")
+    await _section_view("routines", day_date, callback.message, edit=True)
+    await callback.answer("Отмечено")
 
 
 @router.callback_query(F.data == "supp:noop")

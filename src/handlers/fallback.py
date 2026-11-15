@@ -7,12 +7,9 @@ from aiogram import Router, F
 from aiogram.filters import StateFilter
 from aiogram.types import Message
 
-from src.config import settings
 from src.db.base import async_session
-from src.db import crud
 from src.handlers import common
-from src.handlers.common import allowed, apply_text, confirmation, get_active_date
-from src.services.reporter import ReportService
+from src.handlers.common import allowed, apply_text, confirmation, get_active_date, publish_sections_for
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -35,10 +32,4 @@ async def on_text(message: Message):
 
     await message.answer(confirmation(d, applied), parse_mode="HTML")
 
-    if settings.REPORT_CHAT_ID:
-        async with async_session() as session:
-            day = await crud.get_day(session, d)
-        try:
-            await ReportService(message.bot).post_updates(day, applied)
-        except Exception as e:
-            logger.error("post_updates error: %s", e)
+    await publish_sections_for(message.bot, d, applied, always_diary=True)

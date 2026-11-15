@@ -182,17 +182,8 @@ async def toggle_routine(session: AsyncSession, day: models.DayRecord, name: str
     return new_state
 
 
-async def delete_log_line(session: AsyncSession, day: models.DayRecord, index: int) -> bool:
-    """Удаляет строку по её порядковому номеру (1-based) среди log_lines дня
-    и связанные структурные записи этого дня."""
-    res = await session.execute(
-        select(models.LogLine).where(models.LogLine.day_record_id == day.id)
-        .order_by(models.LogLine.id)
-    )
-    lines = list(res.scalars().all())
-    if index < 1 or index > len(lines):
-        return False
-    line = lines[index - 1]
+async def _remove_line_struct(session: AsyncSession, day: models.DayRecord, line: models.LogLine) -> None:
+    """Удаляет одну структурную запись, соответствующую строке лога."""
     cat = line.category
     d = line.payload or {}
 
@@ -204,21 +195,76 @@ async def delete_log_line(session: AsyncSession, day: models.DayRecord, index: i
         model = model_by_cat[cat]
         rows = await session.execute(select(model).where(and_(
             model.day_record_id == day.id, model.detail == line.raw_text,
-        )))
-        for obj in rows.scalars().all():
+        )).limit(1))
+        obj = rows.scalar_one_or_none()
+        if obj is not None:
             await session.delete(obj)
     elif cat == P.SUPPLEMENT:
         name = d.get("name")
         rows = await session.execute(select(models.RoutineCompletion).where(and_(
             models.RoutineCompletion.day_record_id == day.id,
             models.RoutineCompletion.routine_name == name,
-        )))
-        for r in rows.scalars().all():
+        )).limit(1))
+        r = rows.scalar_one_or_none()
+        if r is not None:
             await session.delete(r)
 
     await session.delete(line)
+
+
+async def delete_log_line(session: AsyncSession, day: models.DayRecord, index: int) -> bool:
+    """Удаляет строку по её порядковому номеру (1-based) среди log_lines дня
+    и связанные структурные записи этого дня."""
+    res = await session.execute(
+        select(models.LogLine).where(models.LogLine.day_record_id == day.id)
+        .order_by(models.LogLine.id)
+    )
+    lines = list(res.scalars().all())
+    if index < 1 or index > len(lines):
+        return False
+    line = lines[index - 1]
+    await _remove_line_struct(session, day, line)
     await session.commit()
 
+    await _recompute_day_fields(session, day)
+    return True
+
+
+async def get_log_line(session: AsyncSession, day: models.DayRecord, index: int) -> Optional[models.LogLine]:
+    res = await session.execute(
+        select(models.LogLine).where(models.LogLine.day_record_id == day.id)
+        .order_by(models.LogLine.id)
+    )
+    lines = list(res.scalars().all())
+    if index < 1 or index > len(lines):
+        return None
+    return lines[index - 1]
+
+
+async def delete_log_line_by_id(session: AsyncSession, day: models.DayRecord, line_id: int) -> bool:
+    """Удаляет строку лога по её id.
+
+    Одна введённая строка может дать несколько log_lines (например,
+    «Творог 250г, кешью 20г» → 2). Поэтому удаляем все строки дня с тем же
+    текстом и связанные с ними структурные записи.
+    """
+    res = await session.execute(select(models.LogLine).where(and_(
+        models.LogLine.id == line_id,
+        models.LogLine.day_record_id == day.id,
+    )))
+    line = res.scalar_one_or_none()
+    if not line:
+        return False
+    raw = line.raw_text
+    res = await session.execute(
+        select(models.LogLine).where(and_(
+            models.LogLine.day_record_id == day.id,
+            models.LogLine.raw_text == raw,
+        )).order_by(models.LogLine.id)
+    )
+    for ln in list(res.scalars().all()):
+        await _remove_line_struct(session, day, ln)
+    await session.commit()
     await _recompute_day_fields(session, day)
     return True
 
@@ -262,3 +308,38 @@ async def set_setting(session: AsyncSession, key: str, value: str):
     else:
         session.add(models.UserSettings(key=key, value=value))
     await session.commit()
+
+
+# --------------------------------------------------------------- section posts
+async def get_section_post(session: AsyncSession, day_id: int, section: str) -> Optional[models.SectionPost]:
+    res = await session.execute(select(models.SectionPost).where(and_(
+        models.SectionPost.day_record_id == day_id,
+        models.SectionPost.section == section,
+    )))
+    return res.scalar_one_or_none()
+
+
+async def set_section_post(session: AsyncSession, day_id: int, section: str, message_id: int):
+    res = await session.execute(select(models.SectionPost).where(and_(
+        models.SectionPost.day_record_id == day_id,
+        models.SectionPost.section == section,
+    )))
+    sp = res.scalar_one_or_none()
+    if sp:
+        sp.message_id = message_id
+    else:
+        session.add(models.SectionPost(
+            day_record_id=day_id, section=section, message_id=message_id,
+        ))
+    await session.commit()
+
+
+async def clear_section_post(session: AsyncSession, day_id: int, section: str):
+    res = await session.execute(select(models.SectionPost).where(and_(
+        models.SectionPost.day_record_id == day_id,
+        models.SectionPost.section == section,
+    )))
+    sp = res.scalar_one_or_none()
+    if sp:
+        await session.delete(sp)
+        await session.commit()

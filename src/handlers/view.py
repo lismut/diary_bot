@@ -7,6 +7,7 @@ from aiogram.types import Message
 from src.config import settings
 from src.db.base import async_session
 from src.db import crud, models
+from src.services import parser as P
 from src.utils.helpers import format_date_ru
 
 router = Router()
@@ -64,6 +65,13 @@ def build_summary(day: models.DayRecord) -> str:
         t += "🤸 <b>Висы</b>\n"
         for h in day.hangs:
             t += f"  • {h.detail or (h.hold_size or '')}\n"
+        t += "\n"
+
+    lfk_lines = [ln for ln in day.log_lines if ln.category == P.LFK]
+    if lfk_lines:
+        t += "🤸‍♂️ <b>ЛФК</b>\n"
+        for ln in sorted(lfk_lines, key=lambda x: x.id):
+            t += f"  • {ln.raw_text}\n"
         t += "\n"
 
     if day.meals:

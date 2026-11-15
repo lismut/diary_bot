@@ -68,23 +68,33 @@ async def _backfill_history(bot: Bot):
         logger.info("Выгрузка истории в отчётный чат: %d дней", len(pending))
         for d in pending:
             try:
-                await rep.post_day(d)
+                sent_ok = await rep.post_day(d)
             except Exception as e:
                 logger.error("Ошибка выгрузки дня %s: %s", d.date, e)
-                continue
+                sent_ok = False
+            if not sent_ok:
+                logger.warning(
+                    "День %s отправлен не полностью (лимит Telegram?) — "
+                    "останавливаю выгрузку, продолжу с него после перезапуска", d.date,
+                )
+                return
             async with async_session() as session:
                 await crud.set_setting(session, HISTORY_LAST_DATE_KEY, d.date.isoformat())
-            await asyncio.sleep(0.7)
+            logger.info("День %s выгружен", d.date)
 
     if not analytics_done:
         all_days = [d for d in days if d.date <= today]
         try:
-            await rep.post_analytics(all_days, "за всё время")
+            analytics_ok = await rep.post_analytics(all_days, "за всё время")
         except Exception as e:
             logger.error("Ошибка аналитики истории: %s", e)
-        async with async_session() as session:
-            await crud.set_setting(session, ANALYTICS_BACKFILLED_KEY, "true")
-        logger.info("Историческая аналитика выгружена")
+            analytics_ok = False
+        if analytics_ok:
+            async with async_session() as session:
+                await crud.set_setting(session, ANALYTICS_BACKFILLED_KEY, "true")
+            logger.info("Историческая аналитика выгружена")
+        else:
+            logger.warning("Аналитика выгружена не полностью — повторю при следующем запуске")
 
 
 async def _daily_report(bot: Bot):

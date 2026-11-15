@@ -39,6 +39,7 @@ CLIMBING = "climbing"
 HANG = "hang"
 SUPPLEMENT = "supplement"
 POOL = "pool"
+LFK = "lfk"
 NOTE = "note"
 
 _CFG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
@@ -73,15 +74,29 @@ _NUM_WORDS = {
 }
 
 _SUPPLEMENT_HINTS = [
-    "креатин", "коллаген", "витамин", "омега", "протеин", "добавки для суставов",
-    "раствор для связок", "магний", "рыбий жир", "цинк", "железо", "b12", "d3",
+    "креатин", "витамин", "омега", "протеин", "магний",
+    "рыбий жир", "цинк", "железо", "b12", "d3",
 ]
+
+# Слитые в одну добавки: разные названия -> одно каноническое.
+_SUPPLEMENT_MERGE = {
+    "раствор для связок": "связки/суставы",
+    "добавки для суставов": "связки/суставы",
+    "добавка для суставов": "связки/суставы",
+    "для связок": "связки/суставы",
+    "коллаген": "связки/суставы",
+    "связки": "связки/суставы",
+    "суставы": "связки/суставы",
+    "связки/суставы": "связки/суставы",
+}
+
+_LFK_HINTS = ["лфк", "лечебн", "суставная гимнастика"]
 
 _POOL_HINTS = ["бассейн", "басс ", "плаван", "басс"]
 _HANG_HINTS = ["фингер", "10/50", "вис", "пасс", "пассик", "пассив", "мм"]
 
 _EXERCISE_HINTS = [
-    "лфк", "разминка", "велик", "велосипед", "бег", "гиря", "гантел", "подтяг", "становая",
+    "разминка", "велик", "велосипед", "бег", "гиря", "гантел", "подтяг", "становая",
     "кольца", "отжим", "подъем ног", "подьем ног", "стойка", "бодибар", "резинк", "резин",
     "параллетс", "парадлетс", "параллетсы", "турник", "револьвер", "офп", "растяжк",
     "ходьба", "присед", "жим", "тяга", "планка", "складк", "креветка", "мост", "уголк",
@@ -295,8 +310,12 @@ def detect_steps(low: str):
 def _detect_supplements(low: str) -> list[str]:
     out = []
     for s in known_supplements():
-        if s in low:
+        if s in low and s not in out:
             out.append(s)
+    # слитые названия приводим к одному каноническому
+    for alias, canon in _SUPPLEMENT_MERGE.items():
+        if alias in low and canon not in out:
+            out.append(canon)
     return out
 
 
@@ -327,6 +346,10 @@ def _detect_exercise(low: str) -> bool:
     if WEIGHT_X_RE.search(low) or _WEIGHT_STANDALONE_RE.match(low):
         return True
     return any(k in low for k in _EXERCISE_HINTS)
+
+
+def _detect_lfk(low: str) -> bool:
+    return any(k in low for k in _LFK_HINTS)
 
 
 def _detect_pool(low: str) -> bool:
@@ -426,6 +449,10 @@ def parse_line(text: str, has_wake: bool = False, has_sleep: bool = False) -> li
         return _climb_lines(low, raw)
 
     # 10. упражнения
+    if _detect_lfk(low):
+        return [_lfk_line(raw)]
+
+    # 10b. упражнения
     if _detect_exercise(low):
         return [_exercise_line(low, raw)]
 
@@ -522,6 +549,11 @@ def _climb_item(grade: str, count: int | None, seg: str, raw: str) -> ParsedLine
     }, raw, f"🧗 {label} ({kind}{suffix})")
 
 
+def _lfk_line(raw: str) -> ParsedLine:
+    name = raw[:120]
+    return ParsedLine(LFK, {"name": name}, raw, f"🤸‍♂️ ЛФК: {raw[:40]}")
+
+
 def _exercise_line(low: str, raw: str) -> ParsedLine:
     name = raw
     # уберём числа для имени
@@ -609,6 +641,11 @@ def line_exercise(raw: str) -> ParsedLine:
 
 def line_exercise_name(name: str) -> ParsedLine:
     return ParsedLine(EXERCISE, {"name": name, "detail": name}, name, f"💪 {name}")
+
+
+def line_lfk(raw: str) -> ParsedLine:
+    raw = raw.strip()
+    return _lfk_line(raw)
 
 
 def line_hang(hold: Optional[str], weight: Optional[float], raw: str) -> ParsedLine:

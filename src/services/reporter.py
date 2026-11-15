@@ -1,162 +1,175 @@
+import asyncio
 import io
 import logging
-from datetime import date
+import time
 from typing import Optional
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import BufferedInputFile
 
 from src.config import settings
 from src.db import models
+from src.db.base import async_session
+from src.db import crud
 from src.services.charts import ChartService
+from src.services import sections
 
 logger = logging.getLogger(__name__)
 
-
-def _fmt_date(d: date) -> str:
-    months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
-    return f"{d.day} {months[d.month - 1]} {d.year}"
+MAX_SEND_ATTEMPTS = 8
 
 
 class ReportService:
     def __init__(self, bot: Bot):
         self.bot = bot
+        self._last_send_at: float = 0.0
+        self._throttle_lock = asyncio.Lock()
 
     @property
     def enabled(self) -> bool:
         return bool(settings.REPORT_CHAT_ID)
 
-    async def _send(self, text: str, topic: Optional[int]):
+    async def _throttle(self) -> None:
+        """Держит паузу между отправками, чтобы не ловить 429 от Telegram."""
+        interval = max(0.0, settings.REPORT_SEND_INTERVAL)
+        async with self._throttle_lock:
+            wait = self._last_send_at + interval - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_send_at = time.monotonic()
+
+    async def _call_with_retry(self, label: str, fn, *args, **kwargs):
+        """Вызывает Telegram-метод с учётом 429 (retry_after).
+
+        Возвращает результат вызова или None, если доставить не удалось.
+        """
+        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+            await self._throttle()
+            try:
+                return await fn(*args, **kwargs)
+            except TelegramRetryAfter as e:
+                wait = (e.retry_after or 1) + 1
+                logger.warning(
+                    "429 при отправке (%s): пауза %s с, попытка %s/%s",
+                    label, wait, attempt, MAX_SEND_ATTEMPTS,
+                )
+                await asyncio.sleep(wait)
+            except TelegramAPIError as e:
+                logger.error("Не удалось отправить (%s): %s", label, e)
+                return None
+            except Exception as e:  # noqa: BLE001
+                logger.error("Не удалось отправить (%s): %s", label, e)
+                return None
+        logger.error("Не удалось отправить (%s): исчерпаны попытки", label)
+        return None
+
+    async def _send(self, text: str, topic: Optional[int]) -> bool:
         if not self.enabled:
-            return
-        try:
-            await self.bot.send_message(
-                settings.REPORT_CHAT_ID, text, parse_mode="HTML",
-                message_thread_id=topic, disable_web_page_preview=True,
-            )
-        except Exception as e:
-            logger.error("Не удалось отправить в отчётный чат: %s", e)
+            return True
+        return await self._send_message(text, topic) is not None
 
-    async def _send_photo(self, buf: io.BytesIO, caption: str, topic: Optional[int]):
+    async def _send_message(self, text: str, topic: Optional[int]):
         if not self.enabled:
-            return
+            return None
+        return await self._call_with_retry(
+            "текст", self.bot.send_message,
+            settings.REPORT_CHAT_ID, text, parse_mode="HTML",
+            message_thread_id=topic, disable_web_page_preview=True,
+        )
+
+    async def _edit_message(self, message_id: int, text: str) -> bool:
+        """Правит ранее отправленное сообщение. True — доставлено/уже такое же."""
+        if not self.enabled:
+            return True
+        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+            await self._throttle()
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=settings.REPORT_CHAT_ID, message_id=message_id,
+                    text=text, parse_mode="HTML", disable_web_page_preview=True,
+                )
+                return True
+            except TelegramRetryAfter as e:
+                wait = (e.retry_after or 1) + 1
+                logger.warning("429 при правке: пауза %s с, попытка %s/%s",
+                               wait, attempt, MAX_SEND_ATTEMPTS)
+                await asyncio.sleep(wait)
+            except TelegramBadRequest as e:
+                if "not modified" in str(e).lower():
+                    return True
+                logger.warning("Не удалось изменить сообщение %s: %s", message_id, e)
+                return False
+            except TelegramAPIError as e:
+                logger.warning("Не удалось изменить сообщение %s: %s", message_id, e)
+                return False
+        return False
+
+    async def _delete_message(self, message_id: int) -> bool:
+        if not self.enabled:
+            return True
         try:
-            photo = BufferedInputFile(buf.getvalue(), filename="chart.png")
-            await self.bot.send_photo(
-                settings.REPORT_CHAT_ID, photo, caption=caption,
-                message_thread_id=topic,
-            )
-        except Exception as e:
-            logger.error("Не удалось отправить график: %s", e)
+            await self.bot.delete_message(chat_id=settings.REPORT_CHAT_ID, message_id=message_id)
+            return True
+        except TelegramAPIError as e:
+            logger.warning("Не удалось удалить сообщение %s: %s", message_id, e)
+            return False
 
-    # ---------------------------------------------------------- live updates
-    async def post_updates(self, day: models.DayRecord, applied: list):
-        """Пишет в отчётный чат только что добавленные строки, раскладывая по топикам."""
-        if not self.enabled or not applied:
-            return
-        title = f"📆 {_fmt_date(day.date)}"
+    async def _send_photo(self, buf: io.BytesIO, caption: str, topic: Optional[int]) -> bool:
+        if not self.enabled:
+            return True
+        photo = BufferedInputFile(buf.getvalue(), filename="chart.png")
+        return await self._call_with_retry(
+            "график", self.bot.send_photo,
+            settings.REPORT_CHAT_ID, photo, caption=caption,
+            message_thread_id=topic,
+        ) is not None
 
-        # 1. сырая история дня -> топик дневника
-        raw = "\n".join(f"• {it.raw}" for it in applied)
-        await self._send(f"{title}\n{raw}", settings.TOPIC_DIARY_ID)
+    # ---------------------------------------------------------- sections
+    async def publish_section(self, day: models.DayRecord, section: str) -> bool:
+        """Публикует/правит сообщение одного раздела.
 
-        # 2. структурированно по топикам
-        groups: dict = {}
-        for it in applied:
-            topic = settings.topic_for(it.category)
-            groups.setdefault(topic, []).append(it)
-        for topic, items in groups.items():
-            if topic == settings.TOPIC_DIARY_ID:
-                continue
-            text = title + "\n" + "\n".join(it.display for it in items)
-            await self._send(text, topic)
+        Если сообщение уже есть — редактирует его, иначе отправляет новое и
+        запоминает message_id. Пустой раздел — удаляет ранее отправленное.
+        """
+        if not self.enabled or not day:
+            return True
+        text = sections.build_section_text(day, section)
+        topic = settings.topic_for_section(section)
+        async with async_session() as session:
+            post = await crud.get_section_post(session, day.id, section)
+            if not text:
+                if post and post.message_id:
+                    await self._delete_message(post.message_id)
+                    await crud.clear_section_post(session, day.id, section)
+                return True
+            if post and post.message_id:
+                if await self._edit_message(post.message_id, text):
+                    return True
+            msg = await self._send_message(text, topic)
+            if msg is not None:
+                await crud.set_section_post(session, day.id, section, msg.message_id)
+                return True
+            return False
 
     # ---------------------------------------------------------- day
-    async def post_day(self, day: models.DayRecord):
+    async def post_day(self, day: models.DayRecord) -> bool:
         if not self.enabled:
-            return
-        title = f"📆 <b>{_fmt_date(day.date)}</b>"
-
-        # 1. сырой дневник
-        if day.log_lines:
-            lines = "\n".join(f"• {ln.raw_text}" for ln in sorted(day.log_lines, key=lambda x: x.id))
-            await self._send(f"{title}\n\n<b>Записи дня</b>\n{lines}", settings.TOPIC_DIARY_ID)
-
-        # 2. сон
-        if day.wake_time or day.sleep_time or day.sleep_quality:
-            t = f"{title}\n\n😴 <b>Сон</b>\n"
-            if day.sleep_time:
-                t += f"Засыпание: {day.sleep_time}\n"
-            if day.wake_time:
-                t += f"Пробуждение: {day.wake_time}\n"
-            if day.sleep_hours:
-                t += f"Длительность: {day.sleep_hours} ч\n"
-            if day.sleep_quality:
-                t += f"Качество: {day.sleep_quality}/10"
-            await self._send(t, settings.TOPIC_SLEEP_ID)
-
-        # 3. вес и тело
-        if day.weight or day.resting_hr or day.mood or day.energy:
-            t = f"{title}\n\n"
-            if day.weight:
-                t += f"⚖️ Вес: <b>{day.weight} кг</b>\n"
-            if day.resting_hr:
-                t += f"❤️ Пульс покоя: {day.resting_hr}\n"
-            if day.mood:
-                t += f"🙂 Настроение: {day.mood}/10\n"
-            if day.energy:
-                t += f"⚡ Самочувствие: {day.energy}/10\n"
-            await self._send(t, settings.TOPIC_WEIGHT_ID)
-
-        # 4. шаги
-        if day.steps:
-            await self._send(f"{title}\n\n👟 Шаги: <b>{day.steps}</b>", settings.TOPIC_STEPS_ID)
-
-        # 5. питание
-        if day.meals:
-            total = day.protein_total()
-            norm = settings.PROTEIN_NORM_PER_DAY
-            mark = "🟢" if total >= norm else "🟡"
-            t = f"{title}\n\n🍽 <b>Питание</b>\n"
-            for m in day.meals:
-                t += f"• {m.food_name} {m.amount_grams:g}г (+{m.protein_g:g}г)\n"
-            t += f"\n{mark} Белок: <b>{total}г</b> из {norm}г"
-            await self._send(t, settings.TOPIC_NUTRITION_ID)
-
-        # 6. тренировка
-        if day.exercises:
-            t = f"{title}\n\n💪 <b>Тренировка</b>\n"
-            for e in day.exercises:
-                t += f"• {e.detail or e.name}\n"
-            await self._send(t, settings.TOPIC_TRAINING_ID)
-
-        # 7. скалодром
-        if day.climbing_routes:
-            t = f"{title}\n\n🧗 <b>Скалодром</b>\n"
-            for r in day.climbing_routes:
-                t += f"• {r.detail or (r.grade or 'трасса')}\n"
-            attempts = sum(r.attempts or 0 for r in day.climbing_routes)
-            if attempts:
-                t += f"\nВсего попыток: {attempts}"
-            await self._send(t, settings.TOPIC_CLIMBING_ID)
-
-        # 8. висы
-        if day.hangs:
-            t = f"{title}\n\n🤸 <b>Висы</b>\n"
-            for h in day.hangs:
-                t += f"• {h.detail or (h.hold_size or '')}\n"
-            await self._send(t, settings.TOPIC_HANGS_ID)
-
-        # 9. рутины
-        done = [r.routine_name for r in day.routines if r.completed]
-        if done:
-            await self._send(f"{title}\n\n✅ <b>Добавки/рутины:</b>\n" + "\n".join(f"• {n}" for n in done),
-                             settings.TOPIC_ROUTINES_ID)
+            return True
+        ok = True
+        for section in sections.SECTIONS:
+            try:
+                ok &= await self.publish_section(day, section)
+            except Exception as e:  # noqa: BLE001
+                logger.error("Ошибка публикации раздела %s: %s", section, e)
+                ok = False
+        return ok
 
     # ---------------------------------------------------------- analytics
-    async def post_analytics(self, days: list[models.DayRecord], period_name: str):
+    async def post_analytics(self, days: list[models.DayRecord], period_name: str) -> bool:
         if not self.enabled:
-            return
+            return True
+        ok = True
         caption_prefix = f"📊 {period_name}"
 
         charts = [
@@ -177,5 +190,12 @@ class ReportService:
             except Exception as e:
                 logger.error("Ошибка графика %s: %s", label, e)
                 continue
-            if buf:
-                await self._send_photo(buf, f"{caption_prefix} — {label}", topic)
+            if not buf:
+                continue
+            targets = [topic]
+            analytics_topic = settings.TOPIC_ANALYTICS_ID
+            if analytics_topic and analytics_topic not in targets:
+                targets.append(analytics_topic)
+            for tp in targets:
+                ok &= await self._send_photo(buf, f"{caption_prefix} — {label}", tp)
+        return ok

@@ -9,7 +9,10 @@ from src.config import settings
 from src.db.base import async_session
 from src.db import crud
 from src.handlers import common
-from src.handlers.common import get_active_date, set_active_day, report_active_day
+from src.handlers.common import (
+    get_active_date, set_active_day, report_active_day, publish_section,
+)
+from src.services import sections
 from src.utils.helpers import format_date_ru, parse_date
 
 router = Router()
@@ -78,9 +81,13 @@ async def cmd_del(message: Message):
         if not day:
             await message.answer("Нет записей за этот день.")
             return
+        line = await crud.get_log_line(session, day, idx)
+        cat = line.category if line else None
         ok = await crud.delete_log_line(session, day, idx)
     if ok:
         await message.answer(f"🗑 Удалил строку {idx} за {format_date_ru(d)}.")
+        await publish_section(message.bot, d, sections.section_for_category(cat))
+        await publish_section(message.bot, d, "diary")
     else:
         await message.answer("Нет строки с таким номером.")
 
@@ -94,9 +101,13 @@ async def cmd_undo(message: Message):
             await message.answer("Нечего отменять.")
             return
         n = len(day.log_lines)
-        removed = sorted(day.log_lines, key=lambda x: x.id)[-1].raw_text
+        last = sorted(day.log_lines, key=lambda x: x.id)[-1]
+        removed = last.raw_text
+        cat = last.category
         await crud.delete_log_line(session, day, n)
     await message.answer(f"↩️ Удалил последнюю строку: <i>{removed}</i>", parse_mode="HTML")
+    await publish_section(message.bot, d, sections.section_for_category(cat))
+    await publish_section(message.bot, d, "diary")
 
 
 @router.message(Command("report"))

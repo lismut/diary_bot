@@ -3,6 +3,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Column, Integer, String, Float, Date, DateTime, Boolean, Text, ForeignKey, JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -131,6 +132,21 @@ class RoutineCompletion(Base):
 
     routine_name = Column(String)
     completed = Column(Boolean, default=True)
+
+
+class SectionPost(Base):
+    """Сообщение раздела в отчётном чате (для правки вместо повторной отправки)."""
+    __tablename__ = "section_posts"
+
+    id = Column(Integer, primary_key=True)
+    day_record_id = Column(Integer, ForeignKey("day_records.id"), index=True, nullable=False)
+    section = Column(String, index=True, nullable=False)
+    message_id = Column(Integer)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("day_record_id", "section", name="uq_section_post"),
+    )
 
 
 class UserSettings(Base):
