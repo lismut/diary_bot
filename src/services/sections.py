@@ -181,7 +181,21 @@ def _log_text(day: models.DayRecord, section: str) -> str:
     for ln in lines:
         t += f"• {html.escape(ln.raw_text)}\n"
     if section == "climbing":
-        attempts = sum((ln.payload or {}).get("attempts") or 0 for ln in lines)
-        if attempts:
-            t += f"\nВсего попыток: {attempts}"
+        by_grade: dict[str, list[int]] = {}
+        for ln in lines:
+            d = ln.payload or {}
+            g = d.get("grade") or "?"
+            att = d.get("attempts") or 0
+            sent = 1 if (d.get("sends") or d.get("kind") in ("send", "flash")) else 0
+            e = by_grade.setdefault(g, [0, 0])
+            e[0] += att
+            e[1] += sent
+        if by_grade:
+            order = ["5", "6a", "6b", "6c", "7a", "7b", "7c"]
+            grades = [g for g in order if g in by_grade] + \
+                     sorted(g for g in by_grade if g not in order)
+            t += "\n<b>По категориям:</b>\n"
+            for g in grades:
+                att, sent = by_grade[g]
+                t += f"• {g}: {att} попыт., {sent} пролазов\n"
     return t.rstrip()

@@ -179,7 +179,7 @@ class ReportService:
             ("protein", ChartService.protein, settings.TOPIC_NUTRITION_ID, "🍽 Белок"),
             ("steps", ChartService.steps, settings.TOPIC_STEPS_ID, "👟 Шаги"),
             ("climbing", ChartService.climbing, settings.TOPIC_CLIMBING_ID, "🧗 Объём лазания"),
-            ("climbing_by_grade", ChartService.climbing_by_grade, settings.TOPIC_CLIMBING_ID, "🧗 Трассы по категориям"),
+            ("climbing_distribution", ChartService.climbing_distribution, settings.TOPIC_CLIMBING_ID, "🧗 Попытки/пролазы по категориям"),
             ("hangs", ChartService.hangs, settings.TOPIC_HANGS_ID, "🤸 Висы"),
             ("routines", ChartService.routines, settings.TOPIC_ROUTINES_ID, "✅ Регулярность"),
             ("training_activity", ChartService.training_activity, settings.TOPIC_TRAINING_ID, "💪 Активность"),

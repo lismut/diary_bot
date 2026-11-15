@@ -140,21 +140,33 @@ class ChartService:
         return _to_buf(fig)
 
     @staticmethod
-    def climbing_by_grade(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
-        by_grade: dict[str, int] = {}
+    def climbing_distribution(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        """Распределение попыток и пролазов по категориям."""
+        order = ["5", "6a", "6b", "6c", "7a", "7b", "7c", "8a"]
+        attempts: dict[str, int] = {}
+        sends: dict[str, int] = {}
         for d in days:
             for r in d.climbing_routes:
-                if r.grade:
-                    by_grade[r.grade] = by_grade.get(r.grade, 0) + (r.count or 1)
-        if not by_grade:
+                g = (r.grade or "?").lower()
+                attempts[g] = attempts.get(g, 0) + (r.attempts or 0)
+                sent = bool(r.sends) or r.kind in ("send", "flash")
+                sends[g] = sends.get(g, 0) + (1 if sent else 0)
+        if not attempts:
             return None
-        grades = sorted(by_grade.keys())
-        vals = [by_grade[g] for g in grades]
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.bar(grades, vals, color=ORANGE)
-        ax.set_title("Трассы по категориям", fontweight="bold")
-        ax.set_ylabel("шт")
+        grades = [g for g in order if g in attempts] + \
+                 sorted(g for g in attempts if g not in order)
+        xs = list(range(len(grades)))
+        fig, ax = plt.subplots(figsize=(9, 5))
+        ax.bar([x - 0.2 for x in xs], [attempts[g] for g in grades],
+               width=0.4, color=ORANGE, label="попытки")
+        ax.bar([x + 0.2 for x in xs], [sends[g] for g in grades],
+               width=0.4, color=GREEN, label="пролазы")
+        ax.set_xticks(xs)
+        ax.set_xticklabels(grades)
+        ax.set_title("Распределение попыток и пролазов по категориям", fontweight="bold")
+        ax.set_ylabel("количество")
         ax.grid(True, alpha=0.3, axis="y")
+        ax.legend()
         return _to_buf(fig)
 
     @staticmethod

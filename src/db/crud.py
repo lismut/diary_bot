@@ -150,7 +150,8 @@ async def apply_parsed(session: AsyncSession, day: models.DayRecord, items: list
         elif it.category == P.CLIMBING:
             session.add(models.ClimbingRoute(
                 day_record_id=day.id, grade=d.get("grade"), kind=d.get("kind"),
-                attempts=d.get("attempts"), count=d.get("count"), detail=it.raw,
+                attempts=d.get("attempts"), count=d.get("count"), sends=d.get("sends"),
+                detail=it.raw,
             ))
         elif it.category == P.HANG:
             session.add(models.Hang(

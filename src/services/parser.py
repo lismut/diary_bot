@@ -74,20 +74,21 @@ _NUM_WORDS = {
 }
 
 _SUPPLEMENT_HINTS = [
-    "креатин", "витамин", "омега", "протеин", "магний",
+    "креатин", "витамин", "омега", "протеин", "магний", "коллаген",
     "рыбий жир", "цинк", "железо", "b12", "d3",
 ]
 
-# Слитые в одну добавки: разные названия -> одно каноническое.
+# Слитые в одну добавки: разные названия -> одно каноническое (коллаген).
 _SUPPLEMENT_MERGE = {
-    "раствор для связок": "связки/суставы",
-    "добавки для суставов": "связки/суставы",
-    "добавка для суставов": "связки/суставы",
-    "для связок": "связки/суставы",
-    "коллаген": "связки/суставы",
-    "связки": "связки/суставы",
-    "суставы": "связки/суставы",
-    "связки/суставы": "связки/суставы",
+    "раствор для связок": "коллаген",
+    "добавки для суставов": "коллаген",
+    "добавка для суставов": "коллаген",
+    "для суставов": "коллаген",
+    "для связок": "коллаген",
+    "коллаген": "коллаген",
+    "связки/суставы": "коллаген",
+    "связки": "коллаген",
+    "суставы": "коллаген",
 }
 
 _LFK_HINTS = ["лфк", "лечебн", "суставная гимнастика"]
@@ -529,6 +530,8 @@ def _climb_item(grade: str, count: int | None, seg: str, raw: str) -> ParsedLine
     kind = "attempts"
     if "флеш" in seg:
         kind = "flash"
+    elif "не залез" in seg or "не пролез" in seg or "не вышел" in seg or "неудач" in seg:
+        kind = "fail"
     elif "перепролаз" in seg or "залез" in seg or "софт" in seg:
         kind = "send"
     attempts = None
@@ -541,11 +544,12 @@ def _climb_item(grade: str, count: int | None, seg: str, raw: str) -> ParsedLine
             count = int(m2.group(1))
     if count is None and attempts is None and kind == "attempts":
         count = 1
+    sends = 1 if kind in ("send", "flash") else None
     label = grade or "трасса"
     suffix = f", {count}шт" if count and count != 1 else ""
     return ParsedLine(CLIMBING, {
         "grade": grade, "kind": kind, "attempts": attempts, "count": count,
-        "detail": raw,
+        "sends": sends, "detail": raw,
     }, raw, f"🧗 {label} ({kind}{suffix})")
 
 
@@ -664,8 +668,20 @@ def line_climb(grade: Optional[str], count: Optional[int], attempts: Optional[in
                kind: str, raw: str) -> ParsedLine:
     suffix = f", {count}шт" if count and count != 1 else ""
     return ParsedLine(CLIMBING, {
-        "grade": grade, "kind": kind, "attempts": attempts, "count": count, "detail": raw,
+        "grade": grade, "kind": kind, "attempts": attempts, "count": count,
+        "sends": 1 if kind in ("send", "flash") else None, "detail": raw,
     }, raw, f"🧗 {grade or 'трасса'} ({kind}{suffix})")
+
+
+def line_climb_route(grade: str, attempts: int, sent: bool) -> ParsedLine:
+    """Трасса, введённая кнопками: категория + число попыток + результат."""
+    res = "залез" if sent else "не залез"
+    raw = f"{grade} {attempts} попыт. — {res}"
+    return ParsedLine(CLIMBING, {
+        "grade": grade, "kind": "send" if sent else "fail",
+        "attempts": attempts, "sends": 1 if sent else 0, "count": 1,
+        "detail": raw,
+    }, raw, f"🧗 {grade}: {attempts} попыт. — {res}")
 
 
 def line_meal(food: dict, raw: str) -> ParsedLine:

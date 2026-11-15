@@ -32,7 +32,7 @@ from src.handlers.states import EntryStates
 router = Router()
 logger = logging.getLogger(__name__)
 
-GRADES = ["6a", "6b", "6c", "7a", "7b", "7c"]
+GRADES = ["5", "6a", "6b", "6c", "7a", "7b", "7c"]
 HOLDS = ["20мм", "18мм", "15мм", "12мм", "10мм", "8мм"]
 QUICK_FOODS = ["творог", "курица", "яйцо", "протеин", "кефир", "орехи"]
 
@@ -71,10 +71,18 @@ def _train_rows() -> list[list[InlineKeyboardButton]]:
 
 def _climb_rows() -> list[list[InlineKeyboardButton]]:
     rows = []
-    for i in range(0, len(GRADES), 3):
-        rows.append([InlineKeyboardButton(text=g, callback_data=f"climb:g:{g}") for g in GRADES[i:i + 3]])
+    for i in range(0, len(GRADES), 4):
+        rows.append([InlineKeyboardButton(text=g, callback_data=f"climb:g:{g}") for g in GRADES[i:i + 4]])
     rows.append([InlineKeyboardButton(text="✍️ Другое", callback_data="climb:other")])
     return rows
+
+
+def _climb_result_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Залез", callback_data="climb:res:send"),
+         InlineKeyboardButton(text="❌ Не залез", callback_data="climb:res:fail")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="entry:cancel")],
+    ])
 
 
 def _hang_rows() -> list[list[InlineKeyboardButton]]:
@@ -109,7 +117,7 @@ def _lfk_rows() -> list[list[InlineKeyboardButton]]:
 
 _SECTION_INTRO = {
     "training": "💪 <b>Тренировка</b>\nЗаписывай упражнения по одному или отметь бассейн.",
-    "climbing": "🧗 <b>Лазание</b>\nВыбери категорию или введи текстом.",
+    "climbing": "🧗 <b>Лазание</b>\nВыбери категорию трассы (5, 6a…7c), затем укажи попытки и результат.",
     "hangs": "🤸 <b>Висы</b>\nВыбери зацепку или введи текстом.",
     "nutrition": "🍽 <b>Питание</b>\nЖми продукт из списка или введи текстом — белок посчитаю сам.",
     "lfk": "🤸‍♂️ <b>ЛФК</b>\nЗаписывай упражнения по одному.",
@@ -411,11 +419,10 @@ async def menu_climb(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("climb:g:"))
 async def cb_climb_grade(callback: CallbackQuery, state: FSMContext):
     grade = callback.data.split(":")[2]
-    await state.set_state(EntryStates.climb_count)
+    await state.set_state(EntryStates.climb_attempts)
     await state.update_data(grade=grade)
     await callback.message.answer(
-        f"🧗 <b>{grade}</b>: сколько трасс? Напиши число (напр. <code>5</code>), "
-        f"или <code>флеш</code>, или <code>4 попытки</code>.",
+        f"🧗 <b>{grade}</b>: сколько было попыток? Напиши число (напр. <code>5</code>).",
         parse_mode="HTML", reply_markup=_cancel_kb())
     await callback.answer()
 
@@ -429,30 +436,38 @@ async def cb_climb_other(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.message(EntryStates.climb_count, F.text)
-async def on_climb_count(message: Message, state: FSMContext):
+@router.message(EntryStates.climb_attempts, F.text)
+async def on_climb_attempts(message: Message, state: FSMContext):
     data = await state.get_data()
     grade = data.get("grade")
-    raw = message.text.strip()
-    low = raw.lower()
-    kind, count, attempts = "attempts", None, None
-    if "флеш" in low:
-        kind = "flash"
-    elif "перепролаз" in low or "залез" in low or "софт" in low:
-        kind = "send"
-    m = re.search(r"(\d+)", low)
-    if m:
-        n = int(m.group(1))
-        if "попыт" in low:
-            attempts = n
-        else:
-            count = n
-    if count is None and attempts is None:
-        count = 1
-    item = P.line_climb(grade, count, attempts, kind, f"{grade} {raw}")
+    m = re.search(r"(\d+)", message.text)
+    if not m:
+        await message.answer("Не понял число попыток. Напиши, напр. <code>5</code>",
+                             parse_mode="HTML", reply_markup=_cancel_kb())
+        return
+    attempts = int(m.group(1))
+    await state.set_state(EntryStates.climb_result)
+    await state.update_data(attempts=attempts)
+    await message.answer(
+        f"🧗 <b>{grade}</b>, попыток: {attempts}. Получилось залезть?",
+        parse_mode="HTML", reply_markup=_climb_result_kb())
+
+
+@router.callback_query(F.data.startswith("climb:res:"))
+async def cb_climb_result(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    grade = data.get("grade")
+    attempts = data.get("attempts")
+    sent = callback.data.split(":")[2] == "send"
     await state.clear()
+    if not grade or attempts is None:
+        await callback.message.answer("Не понял данные трассы. Начни заново из раздела «Лазание».")
+        await callback.answer()
+        return
     day_date = await active_day()
-    await _add_to_section(message.bot, day_date, [item], "climbing", message)
+    item = P.line_climb_route(grade, int(attempts), sent)
+    await _add_to_section(callback.bot, day_date, [item], "climbing", callback.message)
+    await callback.answer()
 
 
 @router.message(EntryStates.climb_text, F.text)
