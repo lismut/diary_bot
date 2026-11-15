@@ -44,6 +44,18 @@ def _cancel_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def _quality_keyboard() -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for q in range(1, 11):
+        row.append(InlineKeyboardButton(text=str(q), callback_data=f"sleep:q:{q}"))
+        if len(row) == 5:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def _load_day(day_date):
     async with async_session() as session:
         return await crud.get_day(session, day_date)
@@ -268,16 +280,8 @@ async def cb_sleep_sleep(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "sleep:quality")
 async def cb_sleep_quality(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    rows, row = [], []
-    for q in range(1, 11):
-        row.append(InlineKeyboardButton(text=str(q), callback_data=f"sleep:q:{q}"))
-        if len(row) == 5:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
     await callback.message.answer("😴 Оцени качество сна (1–10):",
-                                  reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+                                  reply_markup=_quality_keyboard())
     await callback.answer()
 
 
@@ -303,6 +307,22 @@ async def on_sleep_time(message: Message, state: FSMContext):
     await state.clear()
     day_date = await active_day()
     await _apply_and_publish(message.bot, day_date, items, "sleep", message)
+    # качество сна спрашиваем только после времени пробуждения
+    if mode == "wake":
+        await state.set_state(EntryStates.sleep_quality)
+        await message.answer("😴 Оцени качество сна (1–10):", reply_markup=_quality_keyboard())
+
+
+@router.message(EntryStates.sleep_quality, F.text)
+async def on_sleep_quality(message: Message, state: FSMContext):
+    q = P.parse_quality_value(message.text)
+    if not q:
+        await message.answer("Не понял оценку. Напиши число от 1 до 10.",
+                             reply_markup=_quality_keyboard())
+        return
+    await state.clear()
+    day_date = await active_day()
+    await _apply_and_publish(message.bot, day_date, [P.line_sleep_quality(q)], "sleep", message)
 
 
 # ================================================================ ВЕС

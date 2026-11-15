@@ -77,6 +77,31 @@ async def completed_routines(session: AsyncSession, day: models.DayRecord) -> se
     return {r.routine_name for r in res.scalars().all()}
 
 
+# --------------------------------------------------------------- sleep
+async def _sleep_time_on(session: AsyncSession, day_date: date) -> Optional[str]:
+    res = await session.execute(
+        select(models.DayRecord.sleep_time).where(models.DayRecord.date == day_date)
+    )
+    return res.scalar_one_or_none()
+
+
+async def recompute_sleep_hours(session: AsyncSession, day: models.DayRecord) -> None:
+    """Длительность сна дня = пробуждение этого дня − засыпание прошлого дня.
+
+    Если у дня меняется засыпание, то оно влияет на сон следующего дня,
+    поэтому пересчитываем и его.
+    """
+    prev_sleep = await _sleep_time_on(session, day.date - timedelta(days=1))
+    day.sleep_hours = P.compute_sleep_hours(day.wake_time, prev_sleep)
+
+    res = await session.execute(
+        select(models.DayRecord).where(models.DayRecord.date == day.date + timedelta(days=1))
+    )
+    nxt = res.scalar_one_or_none()
+    if nxt is not None:
+        nxt.sleep_hours = P.compute_sleep_hours(nxt.wake_time, day.sleep_time)
+
+
 # --------------------------------------------------------------- apply parsed
 async def apply_parsed(session: AsyncSession, day: models.DayRecord, items: list[P.ParsedLine]) -> list[P.ParsedLine]:
     """Применяет разобранные строки к дню, создаёт структурные записи и LogLine."""
@@ -141,7 +166,7 @@ async def apply_parsed(session: AsyncSession, day: models.DayRecord, items: list
             day.notes = (day.notes + "\n" if day.notes else "") + it.raw
         applied.append(it)
 
-    day.sleep_hours = P.compute_sleep_hours(day.wake_time, day.sleep_time)
+    await recompute_sleep_hours(session, day)
     await session.commit()
     return applied
 
@@ -289,7 +314,7 @@ async def _recompute_day_fields(session: AsyncSession, day: models.DayRecord):
     day.energy = simple.get(P.ENERGY, {}).get("energy")
     day.resting_hr = simple.get(P.PULSE, {}).get("resting_hr")
     day.water_l = simple.get(P.WATER, {}).get("water_l")
-    day.sleep_hours = P.compute_sleep_hours(day.wake_time, day.sleep_time)
+    await recompute_sleep_hours(session, day)
     await session.commit()
 
 
