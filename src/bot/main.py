@@ -47,7 +47,9 @@ async def _backfill_history(bot: Bot):
 
     По каждому прошлому дню записи отправляются последовательно и по темам.
     Прогресс хранится в настройке history_last_date, поэтому перезапуск бота
-    не приводит к повторной отправке уже выгруженных дней.
+    не приводит к повторной отправке уже выгруженных дней. Дни, у которых уже
+    есть опубликованные разделы (например, отправленные кнопкой «Готово»),
+    пропускаются — старую историю не переделываем.
     """
     if not settings.REPORT_CHAT_ID:
         return
@@ -56,31 +58,38 @@ async def _backfill_history(bot: Bot):
         last_date = date.fromisoformat(last) if last else None
         analytics_done = await crud.get_setting(session, ANALYTICS_BACKFILLED_KEY)
         days = await crud.get_all_days(session)
+        published_ids = await crud.days_with_section_posts(session)
 
     today = date.today()
-    pending = [
+    candidates = [
         d for d in days
         if d.date < today and (last_date is None or d.date > last_date)
     ]
+    pending = [d for d in candidates if d.id not in published_ids]
 
     rep = ReportService(bot)
     if pending:
         logger.info("Выгрузка истории в отчётный чат: %d дней", len(pending))
-        for d in pending:
-            try:
-                sent_ok = await rep.post_day(d)
-            except Exception as e:
-                logger.error("Ошибка выгрузки дня %s: %s", d.date, e)
-                sent_ok = False
-            if not sent_ok:
-                logger.warning(
-                    "День %s отправлен не полностью (лимит Telegram?) — "
-                    "останавливаю выгрузку, продолжу с него после перезапуска", d.date,
-                )
-                return
+    for d in candidates:
+        # уже опубликован (напр. через «Готово») — только двигаем курсор
+        if d.id in published_ids:
             async with async_session() as session:
                 await crud.set_setting(session, HISTORY_LAST_DATE_KEY, d.date.isoformat())
-            logger.info("День %s выгружен", d.date)
+            continue
+        try:
+            sent_ok = await rep.post_day(d)
+        except Exception as e:
+            logger.error("Ошибка выгрузки дня %s: %s", d.date, e)
+            sent_ok = False
+        if not sent_ok:
+            logger.warning(
+                "День %s отправлен не полностью (лимит Telegram?) — "
+                "останавливаю выгрузку, продолжу с него после перезапуска", d.date,
+            )
+            return
+        async with async_session() as session:
+            await crud.set_setting(session, HISTORY_LAST_DATE_KEY, d.date.isoformat())
+        logger.info("День %s выгружен", d.date)
 
     if not analytics_done:
         all_days = [d for d in days if d.date <= today]

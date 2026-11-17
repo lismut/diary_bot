@@ -67,6 +67,12 @@ async def get_all_days(session: AsyncSession) -> list[models.DayRecord]:
     return list(res.scalars().all())
 
 
+async def days_with_section_posts(session: AsyncSession) -> set[int]:
+    """ID дней, у которых уже есть опубликованное сообщение хотя бы одного раздела."""
+    res = await session.execute(select(models.SectionPost.day_record_id).distinct())
+    return {row[0] for row in res.all()}
+
+
 async def completed_routines(session: AsyncSession, day: models.DayRecord) -> set[str]:
     res = await session.execute(
         select(models.RoutineCompletion).where(and_(
