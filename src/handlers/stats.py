@@ -10,6 +10,7 @@ from src.config import settings
 from src.db.base import async_session
 from src.db import crud
 from src.services.charts import ChartService
+from src.services import parser as P
 from src.services.reporter import ReportService
 
 router = Router()
@@ -73,7 +74,8 @@ def _summary_text(days, period_name: str) -> str:
         norm = settings.PROTEIN_NORM_PER_DAY
         hit = sum(1 for p in proteins if p >= norm)
         t += f"🍽 Белок: ср {sum(proteins)/len(proteins):.0f} г, норма выполнена {hit}/{len(proteins)} дней\n"
-    train = sum(1 for d in days if d.exercises or d.climbing_routes or d.hangs)
+    train = sum(1 for d in days if d.exercises or d.climbing_routes or d.hangs
+                or any(ln.category == P.LFK for ln in (d.log_lines or [])))
     t += f"\n💪 Дней с активностью: {train}/{len(days)}\n"
     climbs = sum(sum(r.attempts or 0 for r in d.climbing_routes) for d in days)
     if climbs:
@@ -93,8 +95,10 @@ async def on_stats(callback: CallbackQuery):
         (ChartService.protein, "Белок"),
         (ChartService.sleep_hours, "Сон"),
         (ChartService.climbing, "Лазание"),
+        (ChartService.climbing_distribution, "Лазание: попытки/пролазы"),
         (ChartService.hangs, "Висы"),
         (ChartService.routines, "Регулярность"),
+        (ChartService.lfk_regularity, "Регулярность ЛФК"),
         (ChartService.steps, "Шаги"),
     ]
     for fn, caption in charts:

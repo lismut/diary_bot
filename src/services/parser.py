@@ -57,7 +57,8 @@ QUALITY_RE = re.compile(r"(\d{1,2})\s*/\s*10")
 GRAMS_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:мл|ml|г|гр|грамм|g)\b", re.IGNORECASE)
 NUM_AFTER_RE = re.compile(r"^[^\d]{0,30}?(\d+(?:[.,]\d+)?)")
 GRADE_RE = re.compile(r"(?<![a-zа-я0-9])([678])\s*([abcабс])", re.IGNORECASE)
-GRADE_COUNT_RE = re.compile(r"(\d+)?\s*([678])\s*([abc])", re.IGNORECASE)
+# "5х6а" / "5x6a" / "5 6а" — количество трасс и категория.
+GRADE_COUNT_RE = re.compile(r"(\d+)?\s*[хx*×]?\s*([678])\s*([abcабс])", re.IGNORECASE)
 SETS_REPS_RE = re.compile(r"(\d+)\s*[хx]\s*(\d+)")
 WEIGHT_X_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*кг\s*[хx]\s*(\d+)", re.IGNORECASE)
 HOLD_MM_RE = re.compile(r"(\d{1,2})\s*мм")
@@ -73,8 +74,9 @@ _NUM_WORDS = {
     "четыре": 4, "пять": 5, "шесть": 6, "семь": 7, "восемь": 8, "девять": 9, "десять": 10,
 }
 
+# Протеин — не добавка, а еда: учитывается по белку (см. config/foods.json).
 _SUPPLEMENT_HINTS = [
-    "креатин", "витамин", "омега", "протеин", "магний", "коллаген",
+    "креатин", "витамин", "омега", "магний", "коллаген",
     "рыбий жир", "цинк", "железо", "b12", "d3",
 ]
 
@@ -336,7 +338,7 @@ def _looks_like_hang(low: str) -> bool:
 
 
 def _detect_climbing(low: str) -> bool:
-    if GRADE_RE.search(normalize_grades(low)):
+    if GRADE_COUNT_RE.search(normalize_grades(low)):
         return True
     return any(k in low for k in ["флеш", "перепролаз", "попытк", "трасс", "детский финал", "софт", "залез"])
 
@@ -505,7 +507,7 @@ def _hang_line(low: str, raw: str) -> ParsedLine:
 
 
 def _climb_lines(low: str, raw: str) -> list[ParsedLine]:
-    """Строка может содержать несколько трасс: '5 6а, 4 6б, 6с флеш'."""
+    """Строка может содержать несколько трасс: '5х6а, 4 6б не залез, 6с флеш'."""
     segments = re.split(r"[,;]", low)
     out: list[ParsedLine] = []
     for seg in segments:
@@ -526,36 +528,95 @@ def _climb_lines(low: str, raw: str) -> list[ParsedLine]:
     return out
 
 
-def _climb_item(grade: str, count: int | None, seg: str, raw: str) -> ParsedLine:
-    kind = "attempts"
-    if "флеш" in seg:
-        kind = "flash"
-    elif "не залез" in seg or "не пролез" in seg or "не вышел" in seg or "неудач" in seg:
-        kind = "fail"
-    elif "перепролаз" in seg or "залез" in seg or "софт" in seg:
-        kind = "send"
+_CLIMB_FAIL_WORDS = ("не залез", "не пролез", "не вышел", "неудач", "не смог", "не осилил")
+
+
+def _climb_display(grade: Optional[str], kind: str, count: int, attempts: Optional[int]) -> str:
+    label = grade or "трасса"
+    cnt = f" ×{count}" if count and count != 1 else ""
+    if kind == "flash":
+        return f"🧗 {label}{cnt} — флеш"
+    if kind == "send":
+        return f"🧗 {label}{cnt} — залез ({attempts} попыт.)"
+    if kind == "fail":
+        return f"🧗 {label}{cnt} — не залез ({attempts} попыт.)"
+    return f"🧗 {label}{cnt} — {attempts} попыт."
+
+
+def _climb_item(grade: Optional[str], count: Optional[int], seg: str, raw: str) -> ParsedLine:
+    """Одна трасса: категория + результат (флеш / не флеш / не залез) + попытки.
+
+    «5х6а» = залез 5 трасс 6а на флеш; «4 6б не залез»; «7а с 7 попытки».
+    """
     attempts = None
     m = re.search(r"(\d+)\s*попыт", seg)
     if m:
         attempts = int(m.group(1))
+    if attempts is None:
+        # «6б не залез 4» — число после слова-результата это попытки.
+        m3 = re.search(
+            r"(?:не\s*залез|не\s*флеш|нефлеш|перепролаз|залез|пролез|софт)\D*?(\d+)",
+            seg,
+        )
+        if m3:
+            attempts = int(m3.group(1))
     if count is None:
         m2 = re.search(r"(\d+)\s*(?:шт|раз)", seg)
         if m2:
             count = int(m2.group(1))
-    if count is None and attempts is None and kind == "attempts":
+
+    if "не флеш" in seg or "нефлеш" in seg:
+        kind = "send"          # залез, но не с первой попытки
+    elif any(w in seg for w in _CLIMB_FAIL_WORDS):
+        kind = "fail"          # не залез
+    elif "флеш" in seg:
+        kind = "flash"
+    elif re.search(r"с\s*\d+\s*попыт", seg):
+        kind = "send"          # «залез с N попытки»
+    elif "перепролаз" in seg or "залез" in seg or "пролез" in seg or "софт" in seg:
+        kind = "send"
+    elif count is not None:
+        kind = "flash"         # «5х6а» → флеш
+    else:
+        kind = "attempts"      # результат не указан
+
+    if count is None:
         count = 1
-    sends = 1 if kind in ("send", "flash") else None
-    label = grade or "трасса"
-    suffix = f", {count}шт" if count and count != 1 else ""
+    if kind == "flash":
+        attempts = count        # флеш — по одной попытке на трассу
+        sends: Optional[int] = count
+    elif kind == "send":
+        attempts = attempts or count
+        sends = count
+    elif kind == "fail":
+        attempts = attempts or count
+        sends = 0
+    else:                       # attempts
+        attempts = attempts or count
+        sends = None
     return ParsedLine(CLIMBING, {
         "grade": grade, "kind": kind, "attempts": attempts, "count": count,
         "sends": sends, "detail": raw,
-    }, raw, f"🧗 {label} ({kind}{suffix})")
+    }, raw, _climb_display(grade, kind, count, attempts))
 
 
 def _lfk_line(raw: str) -> ParsedLine:
     name = raw[:120]
     return ParsedLine(LFK, {"name": name}, raw, f"🤸‍♂️ ЛФК: {raw[:40]}")
+
+
+def lfk_exercise_name(raw: str) -> str:
+    """Нормализованное имя упражнения ЛФК (для статистики регулярности)."""
+    s = raw.strip().lower().replace("ё", "е")
+    s = re.sub(r"\d+\s*[хx*]\s*\d+", " ", s)               # 3х15
+    s = re.sub(r"\d+", " ", s)                             # все числа
+    s = re.sub(r"\b(?:кг|г|гр|мин|сек|секунд|подход\w*|повтор\w*|раз|шт)\b", " ", s)
+    s = re.sub(r"\b(?:лфк|лечебн\w*|суставн\w*|гимнастик\w*)\b", " ", s)
+    s = re.sub(r"[^а-яa-z\s]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    if s in ("лента", "резинка", "эспандер", "с лентой", "с резинкой", "с эспандером"):
+        s = "с лентой/резинкой"
+    return s or raw.strip().lower()
 
 
 def _exercise_line(low: str, raw: str) -> ParsedLine:
@@ -647,6 +708,21 @@ def line_exercise_name(name: str) -> ParsedLine:
     return ParsedLine(EXERCISE, {"name": name, "detail": name}, name, f"💪 {name}")
 
 
+def line_training(raw: str) -> ParsedLine:
+    """Строка, введённая в разделе «Тренировка».
+
+    ЛФК и висы определяются автоматически: они попадут и в тренировку,
+    и в свои отдельные разделы (ЛФК / висы).
+    """
+    raw = raw.strip()
+    low = raw.lower()
+    if _detect_lfk(low):
+        return _lfk_line(raw)
+    if _looks_like_hang(low):
+        return _hang_line(low, raw)
+    return _exercise_line(low, raw)
+
+
 def line_lfk(raw: str) -> ParsedLine:
     raw = raw.strip()
     return _lfk_line(raw)
@@ -673,15 +749,26 @@ def line_climb(grade: Optional[str], count: Optional[int], attempts: Optional[in
     }, raw, f"🧗 {grade or 'трасса'} ({kind}{suffix})")
 
 
-def line_climb_route(grade: str, attempts: int, sent: bool) -> ParsedLine:
-    """Трасса, введённая кнопками: категория + число попыток + результат."""
-    res = "залез" if sent else "не залез"
-    raw = f"{grade} {attempts} попыт. — {res}"
+def line_climb_route(grade: str, attempts: int, kind: str = "send") -> ParsedLine:
+    """Трасса, введённая кнопками: категория + результат + попытки.
+
+    kind: flash (залез с первой попытки), send (залез, не флеш), fail (не залез).
+    """
+    if kind == "flash":
+        attempts, sends, count = 1, 1, 1
+    elif kind == "fail":
+        sends, count = 0, 1
+    else:
+        kind, sends, count = "send", 1, 1
+    if kind == "flash":
+        raw = f"{grade} — флеш"
+    else:
+        label = "залез" if kind == "send" else "не залез"
+        raw = f"{grade} — {label} ({attempts} попыт.)"
     return ParsedLine(CLIMBING, {
-        "grade": grade, "kind": "send" if sent else "fail",
-        "attempts": attempts, "sends": 1 if sent else 0, "count": 1,
-        "detail": raw,
-    }, raw, f"🧗 {grade}: {attempts} попыт. — {res}")
+        "grade": grade, "kind": kind, "attempts": attempts, "sends": sends,
+        "count": count, "detail": raw,
+    }, raw, _climb_display(grade, kind, count, attempts))
 
 
 def line_meal(food: dict, raw: str) -> ParsedLine:

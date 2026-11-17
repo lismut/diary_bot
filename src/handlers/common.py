@@ -29,7 +29,6 @@ BTN_HANG = "🤸 Висы"
 BTN_FOOD = "🍽 Питание"
 BTN_SUPP = "💊 Добавки"
 BTN_STEPS = "👟 Шаги"
-BTN_LFK = "🤸‍♂️ ЛФК"
 BTN_SUMMARY = "📋 Сводка дня"
 BTN_STATS = "📊 Статистика"
 BTN_REPORT = "📤 В отчёт"
@@ -37,7 +36,7 @@ BTN_DAY = "📅 День"
 
 MENU_TEXTS = {
     BTN_SLEEP, BTN_WEIGHT, BTN_TRAIN, BTN_CLIMB, BTN_HANG, BTN_FOOD,
-    BTN_SUPP, BTN_STEPS, BTN_LFK, BTN_SUMMARY, BTN_STATS, BTN_REPORT, BTN_DAY,
+    BTN_SUPP, BTN_STEPS, BTN_SUMMARY, BTN_STATS, BTN_REPORT, BTN_DAY,
 }
 
 
@@ -48,9 +47,8 @@ def main_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_TRAIN), KeyboardButton(text=BTN_CLIMB)],
             [KeyboardButton(text=BTN_HANG), KeyboardButton(text=BTN_FOOD)],
             [KeyboardButton(text=BTN_SUPP), KeyboardButton(text=BTN_STEPS)],
-            [KeyboardButton(text=BTN_LFK), KeyboardButton(text=BTN_SUMMARY)],
-            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_REPORT)],
-            [KeyboardButton(text=BTN_DAY)],
+            [KeyboardButton(text=BTN_SUMMARY), KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_DAY)],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выбери раздел или просто напиши строку",
@@ -153,11 +151,17 @@ async def publish_sections_for(bot, day_date: date, applied, always_diary: bool 
     """Публикует/правит сообщения разделов, затронутых добавленными строками."""
     if not settings.REPORT_CHAT_ID or not applied:
         return
-    section_names: list[str] = ["diary"] if always_diary else []
+    base: list[str] = ["diary"] if always_diary else []
     for it in applied:
         sec = sections.section_for_category(it.category)
-        if sec and sec not in section_names:
-            section_names.append(sec)
+        if sec and sec not in base:
+            base.append(sec)
+    # тренировка делит строки с ЛФК и висами — обновляем и их разделы
+    section_names: list[str] = []
+    for sec in base:
+        for s in sections.related_sections(sec):
+            if s not in section_names:
+                section_names.append(s)
     if not section_names:
         return
     async with async_session() as session:

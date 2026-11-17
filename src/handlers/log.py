@@ -86,7 +86,8 @@ async def cmd_del(message: Message):
         ok = await crud.delete_log_line(session, day, idx)
     if ok:
         await message.answer(f"🗑 Удалил строку {idx} за {format_date_ru(d)}.")
-        await publish_section(message.bot, d, sections.section_for_category(cat))
+        for sec in sections.related_sections(sections.section_for_category(cat) or ""):
+            await publish_section(message.bot, d, sec)
         await publish_section(message.bot, d, "diary")
     else:
         await message.answer("Нет строки с таким номером.")
@@ -106,7 +107,8 @@ async def cmd_undo(message: Message):
         cat = last.category
         await crud.delete_log_line(session, day, n)
     await message.answer(f"↩️ Удалил последнюю строку: <i>{removed}</i>", parse_mode="HTML")
-    await publish_section(message.bot, d, sections.section_for_category(cat))
+    for sec in sections.related_sections(sections.section_for_category(cat) or ""):
+        await publish_section(message.bot, d, sec)
     await publish_section(message.bot, d, "diary")
 
 

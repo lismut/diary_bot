@@ -182,6 +182,7 @@ class ReportService:
             ("climbing_distribution", ChartService.climbing_distribution, settings.TOPIC_CLIMBING_ID, "🧗 Попытки/пролазы по категориям"),
             ("hangs", ChartService.hangs, settings.TOPIC_HANGS_ID, "🤸 Висы"),
             ("routines", ChartService.routines, settings.TOPIC_ROUTINES_ID, "✅ Регулярность"),
+            ("lfk_regularity", ChartService.lfk_regularity, settings.TOPIC_LFK_ID, "🤸‍♂️ Регулярность ЛФК"),
             ("training_activity", ChartService.training_activity, settings.TOPIC_TRAINING_ID, "💪 Активность"),
         ]
         for _, fn, topic, label in charts:

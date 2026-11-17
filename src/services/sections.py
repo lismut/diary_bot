@@ -40,7 +40,7 @@ SECTION_CATEGORIES: dict[str, Optional[set[str]]] = {
     "weight": {P.WEIGHT, P.PULSE, P.MOOD, P.ENERGY, P.WATER},
     "steps": {P.STEPS},
     "nutrition": {P.MEAL},
-    "training": {P.EXERCISE, P.POOL},
+    "training": {P.EXERCISE, P.POOL, P.LFK, P.HANG},
     "climbing": {P.CLIMBING},
     "hangs": {P.HANG},
     "routines": {P.SUPPLEMENT},
@@ -65,6 +65,22 @@ _CATEGORY_SECTION = {
 def section_for_category(category: str) -> Optional[str]:
     """Раздел, в который попадает строка данной категории."""
     return _CATEGORY_SECTION.get(category)
+
+
+def related_sections(section: str) -> list[str]:
+    """Разделы, которые нужно обновить вместе с данным.
+
+    Тренировка включает ЛФК и висы, поэтому при публикации тренировки
+    нужно обновить и их отдельные разделы (и наоборот).
+    """
+    cats = SECTION_CATEGORIES.get(section)
+    if not cats:
+        return [section]
+    out = [section]
+    for other, other_cats in SECTION_CATEGORIES.items():
+        if other != section and other_cats and (other_cats & cats):
+            out.append(other)
+    return out
 
 
 def section_log_lines(day: models.DayRecord, section: str) -> list[models.LogLine]:
@@ -186,10 +202,12 @@ def _log_text(day: models.DayRecord, section: str) -> str:
             d = ln.payload or {}
             g = d.get("grade") or "?"
             att = d.get("attempts") or 0
-            sent = 1 if (d.get("sends") or d.get("kind") in ("send", "flash")) else 0
+            sent = d.get("sends")
+            if sent is None:
+                sent = 1 if d.get("kind") in ("send", "flash") else 0
             e = by_grade.setdefault(g, [0, 0])
             e[0] += att
-            e[1] += sent
+            e[1] += int(sent)
         if by_grade:
             order = ["5", "6a", "6b", "6c", "7a", "7b", "7c"]
             grades = [g for g in order if g in by_grade] + \

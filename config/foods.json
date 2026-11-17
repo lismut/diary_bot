@@ -17,7 +17,7 @@
     {"name": "креветка", "aliases": ["креветка", "креветки"], "protein_per_100g": 20.0, "default_grams": 100},
     {"name": "тунец", "aliases": ["тунец", "тунца"], "protein_per_100g": 24.0, "default_grams": 180},
     {"name": "сардины", "aliases": ["сардин", "сардины"], "protein_per_100g": 24.0, "default_grams": 180},
-    {"name": "протеин", "aliases": ["протеин", "protein", "протеиновый"], "protein_per_100g": 80.0, "default_grams": 30},
+    {"name": "протеин", "aliases": ["протеин", "protein", "протеиновый"], "protein_per_100g": 70.0, "default_grams": 30},
     {"name": "коллаген", "aliases": ["коллаген"], "protein_per_100g": 90.0, "default_grams": 10},
     {"name": "холодец", "aliases": ["холодец"], "protein_per_100g": 10.0, "default_grams": 200},
     {"name": "сосиска", "aliases": ["сосиск", "сардельк"], "protein_per_100g": 11.0, "default_grams": 60},

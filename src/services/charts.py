@@ -9,6 +9,7 @@ from matplotlib.figure import Figure
 
 from src.config import settings
 from src.db import models
+from src.services import parser as P
 
 plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["axes.unicode_minus"] = False
@@ -32,6 +33,13 @@ def _to_buf(fig: Figure) -> io.BytesIO:
 
 def _dates_labels(days: list[date], rotation: int = 45):
     return [d.strftime("%d.%m") for d in days]
+
+
+def _route_sends(r) -> int:
+    """Число пролазов трассы (учитывает старый формат, где sends — флаг)."""
+    if r.sends is not None:
+        return int(r.sends)
+    return 1 if r.kind in ("send", "flash") else 0
 
 
 class ChartService:
@@ -121,7 +129,7 @@ class ChartService:
         data = []
         for d in days:
             attempts = sum(r.attempts or 0 for r in d.climbing_routes)
-            routes = sum(r.count or 0 for r in d.climbing_routes)
+            routes = sum(_route_sends(r) for r in d.climbing_routes)
             if d.climbing_routes:
                 data.append((d.date, attempts, routes))
         if not data:
@@ -149,8 +157,7 @@ class ChartService:
             for r in d.climbing_routes:
                 g = (r.grade or "?").lower()
                 attempts[g] = attempts.get(g, 0) + (r.attempts or 0)
-                sent = bool(r.sends) or r.kind in ("send", "flash")
-                sends[g] = sends.get(g, 0) + (1 if sent else 0)
+                sends[g] = sends.get(g, 0) + _route_sends(r)
         if not attempts:
             return None
         grades = [g for g in order if g in attempts] + \
@@ -218,12 +225,44 @@ class ChartService:
         return _to_buf(fig)
 
     @staticmethod
+    def lfk_regularity(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
+        """Регулярность упражнений ЛФК: % дней периода, когда упражнение делалось."""
+        if not days:
+            return None
+        counts: dict[str, int] = {}
+        for d in days:
+            names = {
+                P.lfk_exercise_name(ln.raw_text)
+                for ln in (d.log_lines or [])
+                if ln.category == P.LFK
+            }
+            for n in names:
+                if n:
+                    counts[n] = counts.get(n, 0) + 1
+        if not counts:
+            return None
+        n_days = len(days)
+        names = sorted(counts.keys(), key=lambda n: (-counts[n], n))
+        pct = [100 * counts[n] / n_days for n in names]
+        fig, ax = plt.subplots(figsize=(9, max(3, 0.5 * len(names) + 2)))
+        ax.barh(names, pct, color=PURPLE)
+        ax.invert_yaxis()
+        ax.set_xlim(0, 100)
+        ax.set_xlabel("% дней")
+        ax.set_title("Регулярность упражнений ЛФК", fontweight="bold")
+        ax.grid(True, alpha=0.3, axis="x")
+        return _to_buf(fig)
+
+    @staticmethod
     def training_activity(days: list[models.DayRecord]) -> Optional[io.BytesIO]:
         if not days:
             return None
         dates, vals = [], []
         for d in days:
-            active = bool(d.exercises or d.climbing_routes or d.hangs)
+            active = bool(
+                d.exercises or d.climbing_routes or d.hangs
+                or any(ln.category == P.LFK for ln in (d.log_lines or []))
+            )
             vals.append(1 if active else 0)
             dates.append(d.date)
         if not any(vals):
