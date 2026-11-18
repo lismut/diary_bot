@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from aiogram.types import (
     Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton,
@@ -90,6 +90,18 @@ async def active_day() -> date:
         return await get_active_date(session)
 
 
+async def shift_active_after_sleep(entered_day: date) -> date:
+    """После ввода времени засыпания активным становится следующий день.
+
+    Если время засыпания вводилось для сегодня — активным станет завтра,
+    если для вчера — активным станет сегодня.
+    """
+    new_day = entered_day + timedelta(days=1)
+    async with async_session() as session:
+        await set_active_day(session, new_day)
+    return new_day
+
+
 # ---------------------------------------------------------------- применение
 async def apply_text(session, day_date: date, text: str):
     """Разбирает текст (возможно многострочный) и применяет к дню."""
@@ -99,6 +111,7 @@ async def apply_text(session, day_date: date, text: str):
     has_sleep = bool(day.sleep_time)
 
     applied: list[P.ParsedLine] = []
+    sleep_entered = False
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -112,6 +125,10 @@ async def apply_text(session, day_date: date, text: str):
                 has_wake = True
             elif it.category == P.SLEEP_TIME:
                 has_sleep = True
+                sleep_entered = True
+    # ввели время засыпания — активным становится следующий день
+    if sleep_entered:
+        await set_active_day(session, day_date + timedelta(days=1))
     return day, applied
 
 

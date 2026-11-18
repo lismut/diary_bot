@@ -28,6 +28,7 @@ from src.handlers.common import (
     add_items, confirmation, active_day,
 )
 from src.handlers.states import EntryStates
+from src.utils.helpers import format_date_ru
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 GRADES = ["5", "6a", "6b", "6c", "7a", "7b", "7c"]
 HOLDS = ["20мм", "18мм", "15мм", "12мм", "10мм", "8мм"]
 QUICK_FOODS = ["творог", "курица", "яйцо", "протеин", "кефир", "орехи"]
+DEFAULT_WAKE = "07:30"
+DEFAULT_SLEEP = "00:30"
 
 
 # ---------------------------------------------------------------- вспомогательное
@@ -268,15 +271,54 @@ async def cb_del(callback: CallbackQuery, state: FSMContext):
 
 
 # ================================================================ СОН
+async def _ask_sleep_quality(message: Message):
+    await message.answer("😴 Оцени качество сна (1–10):", reply_markup=_quality_keyboard())
+
+
+async def _record_sleep_time(bot, message: Message, mode: str, t: str):
+    """Записывает время пробуждения/засыпания и публикует раздел «Сон».
+
+    После времени засыпания активный день переключается на следующий:
+    ввели для сегодня — активным станет завтра, для вчера — сегодня.
+    """
+    day_date = await active_day()
+    items = [P.line_wake(t) if mode == "wake" else P.line_sleep_time(t)]
+    await _apply_and_publish(bot, day_date, items, "sleep", message)
+    if mode == "sleep":
+        new_day = await common.shift_active_after_sleep(day_date)
+        await message.answer(
+            f"📅 Активный день: <b>{format_date_ru(new_day)}</b> (день после засыпания).",
+            parse_mode="HTML",
+        )
+
+
 @router.message(F.text == BTN_SLEEP)
 async def menu_sleep(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏰ Пробуждение", callback_data="sleep:wake"),
-         InlineKeyboardButton(text="🌙 Засыпание", callback_data="sleep:sleep")],
+        [InlineKeyboardButton(text=f"⏰ Пробуждение {DEFAULT_WAKE}", callback_data="sleep:def:wake"),
+         InlineKeyboardButton(text="✍️ Другое", callback_data="sleep:wake")],
+        [InlineKeyboardButton(text=f"🌙 Засыпание {DEFAULT_SLEEP}", callback_data="sleep:def:sleep"),
+         InlineKeyboardButton(text="✍️ Другое", callback_data="sleep:sleep")],
         [InlineKeyboardButton(text="😴 Качество сна", callback_data="sleep:quality")],
     ])
     await message.answer("😴 <b>Сон</b>\nЧто записать?", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "sleep:def:wake")
+async def cb_sleep_def_wake(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await _record_sleep_time(callback.bot, callback.message, "wake", DEFAULT_WAKE)
+    await callback.answer("Записал")
+    await state.set_state(EntryStates.sleep_quality)
+    await _ask_sleep_quality(callback.message)
+
+
+@router.callback_query(F.data == "sleep:def:sleep")
+async def cb_sleep_def_sleep(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await _record_sleep_time(callback.bot, callback.message, "sleep", DEFAULT_SLEEP)
+    await callback.answer("Записал")
 
 
 @router.callback_query(F.data == "sleep:wake")
@@ -300,8 +342,7 @@ async def cb_sleep_sleep(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "sleep:quality")
 async def cb_sleep_quality(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.answer("😴 Оцени качество сна (1–10):",
-                                  reply_markup=_quality_keyboard())
+    await _ask_sleep_quality(callback.message)
     await callback.answer()
 
 
@@ -323,14 +364,12 @@ async def on_sleep_time(message: Message, state: FSMContext):
         await message.answer("Не понял время. Напиши, напр. <code>7:30</code>",
                              parse_mode="HTML", reply_markup=_cancel_kb())
         return
-    items = [P.line_wake(t) if mode == "wake" else P.line_sleep_time(t)]
     await state.clear()
-    day_date = await active_day()
-    await _apply_and_publish(message.bot, day_date, items, "sleep", message)
+    await _record_sleep_time(message.bot, message, mode, t)
     # качество сна спрашиваем только после времени пробуждения
     if mode == "wake":
         await state.set_state(EntryStates.sleep_quality)
-        await message.answer("😴 Оцени качество сна (1–10):", reply_markup=_quality_keyboard())
+        await _ask_sleep_quality(message)
 
 
 @router.message(EntryStates.sleep_quality, F.text)
@@ -664,4 +703,30 @@ async def cb_supp_toggle(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "supp:noop")
 async def cb_supp_noop(callback: CallbackQuery):
+    await callback.answer()
+
+
+# ================================================================ ОПРОСЫ
+# Кнопки из проактивных опросов (см. src/handlers/survey.py).
+_SURVEY_SECTIONS = ("training", "nutrition", "routines", "hangs", "climbing")
+
+
+@router.callback_query(F.data == "survey:steps")
+async def cb_survey_steps(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(EntryStates.steps)
+    await callback.message.answer("👟 Сколько шагов? Напр. <code>15000</code> или <code>15к</code>",
+                                  parse_mode="HTML", reply_markup=_cancel_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("survey:open:"))
+async def cb_survey_open(callback: CallbackQuery, state: FSMContext):
+    section = callback.data.split(":", 2)[2]
+    if section not in _SURVEY_SECTIONS:
+        await callback.answer("Не понял", show_alert=True)
+        return
+    await state.clear()
+    day_date = await active_day()
+    await _section_view(section, day_date, callback.message)
     await callback.answer()

@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from src.config import settings
 from src.db.base import init_db, async_session
 from src.db import crud
-from src.handlers import start, view, stats, log, menu, entry, fallback
+from src.handlers import start, view, stats, log, menu, entry, fallback, survey
 from src.services.reporter import ReportService
 
 logging.basicConfig(
@@ -161,8 +161,30 @@ async def main():
             _weekly_analytics, CronTrigger(day_of_week="sun", hour=20, minute=0),
             args=[bot], id="weekly_analytics",
         )
+    if settings.SURVEYS_ENABLED and settings.MAIN_CHAT_ID:
+        # будни: утренний опрос; выходные: позже
+        scheduler.add_job(
+            survey.send_morning,
+            CronTrigger(day_of_week="mon-fri",
+                        hour=settings.MORNING_WEEKDAY_HOUR,
+                        minute=settings.MORNING_WEEKDAY_MINUTE),
+            args=[bot], id="morning_weekday",
+        )
+        scheduler.add_job(
+            survey.send_morning,
+            CronTrigger(day_of_week="sat,sun",
+                        hour=settings.MORNING_WEEKEND_HOUR,
+                        minute=settings.MORNING_WEEKEND_MINUTE),
+            args=[bot], id="morning_weekend",
+        )
+        scheduler.add_job(
+            survey.send_evening,
+            CronTrigger(hour=settings.EVENING_HOUR, minute=settings.EVENING_MINUTE),
+            args=[bot], id="evening_survey",
+        )
+    if scheduler.get_jobs():
         scheduler.start()
-        logger.info("Планировщик запущен")
+        logger.info("Планировщик запущен (%d задач)", len(scheduler.get_jobs()))
 
     # Однократная выгрузка истории (идемпотентна благодаря history_last_date)
     asyncio.create_task(_backfill_history(bot))

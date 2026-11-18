@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     REPORT_MINUTE: int = 0
     REPORT_SEND_INTERVAL: float = 3.0            # пауза между сообщениями в отчётный чат, сек
 
+    # Опросы в личном чате (бот пишет сам)
+    SURVEYS_ENABLED: bool = True
+    MORNING_WEEKDAY_HOUR: int = 8                # будни: во сколько спросить про пробуждение
+    MORNING_WEEKDAY_MINUTE: int = 0
+    MORNING_WEEKEND_HOUR: int = 9                # выходные
+    MORNING_WEEKEND_MINUTE: int = 0
+    EVENING_HOUR: int = 23                       # вечерний опрос
+    EVENING_MINUTE: int = 30
+
     @field_validator(
         "MAIN_CHAT_ID", "REPORT_CHAT_ID",
         "TOPIC_DIARY_ID", "TOPIC_SLEEP_ID", "TOPIC_WEIGHT_ID", "TOPIC_TRAINING_ID",

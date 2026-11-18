@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from aiogram import Router, F
 from aiogram.filters import StateFilter
@@ -10,6 +11,8 @@ from aiogram.types import Message
 from src.db.base import async_session
 from src.handlers import common
 from src.handlers.common import allowed, apply_text, confirmation, get_active_date, publish_sections_for
+from src.services import parser as P
+from src.utils.helpers import format_date_ru
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -30,6 +33,9 @@ async def on_text(message: Message):
         )
         return
 
-    await message.answer(confirmation(d, applied), parse_mode="HTML")
+    text = confirmation(d, applied)
+    if any(it.category == P.SLEEP_TIME for it in applied):
+        text += f"\n\n📅 Активный день: <b>{format_date_ru(d + timedelta(days=1))}</b>"
+    await message.answer(text, parse_mode="HTML")
 
     await publish_sections_for(message.bot, d, applied, always_diary=True)
