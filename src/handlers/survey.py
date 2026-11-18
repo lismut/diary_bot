@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 def morning_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏰ Проснулся в 07:30", callback_data="sleep:def:wake"),
-         InlineKeyboardButton(text="✍️ Другое время", callback_data="sleep:wake")],
+        [InlineKeyboardButton(text="⏰ Проснулся в 07:30", callback_data="sleep:def:wake")],
     ])
 
 
@@ -32,8 +31,7 @@ def evening_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💊 Добавки", callback_data="survey:open:routines"),
          InlineKeyboardButton(text="🍽 Еда", callback_data="survey:open:nutrition")],
         [InlineKeyboardButton(text="💪 Тренировка", callback_data="survey:open:training")],
-        [InlineKeyboardButton(text="🌙 Заснул в 00:30", callback_data="sleep:def:sleep"),
-         InlineKeyboardButton(text="✍️ Другое время", callback_data="sleep:sleep")],
+        [InlineKeyboardButton(text="🌙 Заснул в 00:30", callback_data="sleep:def:sleep")],
     ])
 
 
@@ -57,7 +55,8 @@ async def send_morning(bot: Bot) -> None:
     try:
         await bot.send_message(
             settings.MAIN_CHAT_ID,
-            "☀️ Доброе утро! Во сколько проснулся? И как спал (1–10)?",
+            "☀️ Доброе утро! Во сколько проснулся? И как спал (1–10)?\n"
+            "Жми кнопку или напиши своё время текстом.",
             reply_markup=morning_keyboard(),
         )
     except Exception as e:  # noqa: BLE001
@@ -72,7 +71,8 @@ async def send_evening(bot: Bot) -> None:
         await bot.send_message(
             settings.MAIN_CHAT_ID,
             "🌙 Итоги дня: сколько шагов, добавки, еда, тренировка? "
-            "И во сколько собираешься засыпать?",
+            "И во сколько собираешься засыпать?\n"
+            "Жми кнопку или напиши своё время текстом.",
             reply_markup=evening_keyboard(),
         )
     except Exception as e:  # noqa: BLE001

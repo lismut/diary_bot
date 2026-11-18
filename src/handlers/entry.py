@@ -296,13 +296,13 @@ async def _record_sleep_time(bot, message: Message, mode: str, t: str):
 async def menu_sleep(message: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"⏰ Пробуждение {DEFAULT_WAKE}", callback_data="sleep:def:wake"),
-         InlineKeyboardButton(text="✍️ Другое", callback_data="sleep:wake")],
-        [InlineKeyboardButton(text=f"🌙 Засыпание {DEFAULT_SLEEP}", callback_data="sleep:def:sleep"),
-         InlineKeyboardButton(text="✍️ Другое", callback_data="sleep:sleep")],
+        [InlineKeyboardButton(text=f"⏰ Пробуждение {DEFAULT_WAKE}", callback_data="sleep:def:wake")],
+        [InlineKeyboardButton(text=f"🌙 Засыпание {DEFAULT_SLEEP}", callback_data="sleep:def:sleep")],
         [InlineKeyboardButton(text="😴 Качество сна", callback_data="sleep:quality")],
     ])
-    await message.answer("😴 <b>Сон</b>\nЧто записать?", reply_markup=kb, parse_mode="HTML")
+    await message.answer(
+        "😴 <b>Сон</b>\nЖми кнопку со временем по умолчанию или просто напиши своё время текстом.",
+        reply_markup=kb, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "sleep:def:wake")
