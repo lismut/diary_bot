@@ -189,24 +189,50 @@ def _routines_text(day: models.DayRecord) -> str:
     return t
 
 
+def climb_counts(day: models.DayRecord) -> dict[str, int]:
+    """Сколько раз в дне встретилась каждая трасса (по исходному тексту).
+
+    Одинаковые строки схлопываются для показа, но каждая кнопка — отдельная
+    трасса, поэтому показываем «×5», а статистику считаем по всем записям.
+    """
+    out: dict[str, int] = {}
+    if not day:
+        return out
+    for r in (day.climbing_routes or []):
+        key = r.detail or ""
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
 def _log_text(day: models.DayRecord, section: str) -> str:
     lines = section_log_lines(day, section)
     if not lines:
         return ""
     t = f"{_title(day)}\n\n{SECTION_TITLES.get(section, '')}\n"
+    counts = climb_counts(day) if section == "climbing" else {}
     for ln in lines:
-        t += f"• {html.escape(ln.raw_text)}\n"
+        n = counts.get(ln.raw_text, 1)
+        suffix = f" <b>×{n}</b>" if n > 1 else ""
+        t += f"• {html.escape(ln.raw_text)}{suffix}\n"
     if section == "climbing":
         by_grade: dict[str, list[int]] = {}
-        for ln in lines:
-            d = ln.payload or {}
-            g = d.get("grade") or "?"
-            att = d.get("attempts") or 0
-            sent = d.get("sends")
+        # Считаем по ВСЕМ трассам дня, а не по схлопнутым строкам лога.
+        route_data: list[tuple] = []
+        for r in (day.climbing_routes or []):
+            route_data.append((r.grade, r.kind, r.attempts, r.sends))
+        if not route_data:
+            # fallback для записей без структурных строк (старый формат)
+            for ln in (day.log_lines or []):
+                if ln.category == P.CLIMBING:
+                    d = ln.payload or {}
+                    route_data.append((d.get("grade"), d.get("kind"),
+                                       d.get("attempts"), d.get("sends")))
+        for g, kind, att, sent in route_data:
+            g = (g or "?").lower()
             if sent is None:
-                sent = 1 if d.get("kind") in ("send", "flash") else 0
+                sent = 1 if kind in ("send", "flash") else 0
             e = by_grade.setdefault(g, [0, 0])
-            e[0] += att
+            e[0] += att or 0
             e[1] += int(sent)
         if by_grade:
             order = ["5", "6a", "6b", "6c", "7a", "7b", "7c"]

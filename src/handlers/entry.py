@@ -161,6 +161,7 @@ async def _section_view(section: str, day_date, message: Message, edit: bool = F
     intro, action_rows = await _section_ui(section, day_date)
     day = await _load_day(day_date)
     lines = sections.section_log_lines(day, section) if day else []
+    counts = sections.climb_counts(day) if (day and section == "climbing") else {}
 
     text = intro
     if section == "routines":
@@ -168,7 +169,9 @@ async def _section_view(section: str, day_date, message: Message, edit: bool = F
         text += "\n\n" + ("✅ " + ", ".join(done) if done else "<i>Пока пусто</i>")
     elif lines:
         text += "\n\n<b>Записано:</b>\n" + "\n".join(
-            f"{i}. {html.escape(ln.raw_text)}" for i, ln in enumerate(lines, 1))
+            f"{i}. {html.escape(ln.raw_text)}"
+            + (f" ×{counts[ln.raw_text]}" if counts.get(ln.raw_text, 1) > 1 else "")
+            for i, ln in enumerate(lines, 1))
     else:
         text += "\n\n<i>Пока пусто</i>"
 
@@ -218,7 +221,8 @@ async def _apply_and_publish(bot, day_date, items, section: str, message: Messag
             await ReportService(bot).publish_section(day, section)
         except Exception as e:  # noqa: BLE001
             logger.error("publish_section %s error: %s", section, e)
-    await message.answer(confirmation(day_date, applied), parse_mode="HTML", reply_markup=extra_kb)
+    await common.answer_long(message, confirmation(day_date, applied), parse_mode="HTML",
+                             reply_markup=extra_kb)
 
 
 # ---------------------------------------------------------------- отмена/готово/удаление

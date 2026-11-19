@@ -4,6 +4,33 @@ from typing import Optional
 
 _MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
+# Лимит текста одного сообщения Telegram — 4096 символов; оставляем запас.
+TELEGRAM_TEXT_LIMIT = 4000
+
+
+def split_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    """Разбивает длинный текст на части, предпочтительно по строкам."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    buf = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if buf:
+                chunks.append(buf.rstrip("\n"))
+                buf = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        candidate = buf + ("\n" if buf else "") + line
+        if buf and len(candidate) > limit:
+            chunks.append(buf.rstrip("\n"))
+            buf = line
+        else:
+            buf = candidate
+    if buf:
+        chunks.append(buf.rstrip("\n"))
+    return [c for c in chunks if c]
+
 
 def format_date_ru(d: date) -> str:
     return f"{d.day} {_MONTHS[d.month - 1]} {d.year}"

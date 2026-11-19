@@ -322,7 +322,15 @@ def _detect_supplements(low: str) -> list[str]:
     return out
 
 
+_HORIZ_HANG_RE = re.compile(
+    r"(?:гор(?:изонт)?\w*[.\s]*вис|вис[.\s]*гор(?:изонт)?\w*)", re.IGNORECASE
+)
+
+
 def _looks_like_hang(low: str) -> bool:
+    # ЛФК (в т.ч. горизонтальный вис на перекладине/кольцах) — не висы на зацепках.
+    if "лфк" in low or "лечебн" in low or _HORIZ_HANG_RE.search(low):
+        return False
     if "гориз" in low:
         return False
     if "револьвер" in low and "мм" not in low:
@@ -352,7 +360,9 @@ def _detect_exercise(low: str) -> bool:
 
 
 def _detect_lfk(low: str) -> bool:
-    return any(k in low for k in _LFK_HINTS)
+    # Горизонтальный вис («гор вис») — это ЛФК/подводящее к гимнастике,
+    # а не висы на зацепках (fingerboard).
+    return any(k in low for k in _LFK_HINTS) or bool(_HORIZ_HANG_RE.search(low))
 
 
 def _detect_pool(low: str) -> bool:
@@ -443,17 +453,18 @@ def parse_line(text: str, has_wake: bool = False, has_sleep: bool = False) -> li
         name = "Бассейн" + (f" {minutes}мин" if minutes else "")
         return [ParsedLine(EXERCISE, {"name": name, "detail": raw}, raw, f"🏊 {name}")]
 
-    # 8. висы
+    # 8. ЛФК (в т.ч. «гор вис» — горизонтальный вис) — раньше висов,
+    #    чтобы «ЛФК гор вис 3х15сек» не уехало в раздел висов.
+    if _detect_lfk(low):
+        return [_lfk_line(raw)]
+
+    # 9. висы
     if _looks_like_hang(low):
         return [_hang_line(low, raw)]
 
-    # 9. лазание
+    # 10. лазание
     if _detect_climbing(low):
         return _climb_lines(low, raw)
-
-    # 10. упражнения
-    if _detect_lfk(low):
-        return [_lfk_line(raw)]
 
     # 10b. упражнения
     if _detect_exercise(low):
@@ -601,8 +612,9 @@ def _climb_item(grade: Optional[str], count: Optional[int], seg: str, raw: str) 
 
 
 def _lfk_line(raw: str) -> ParsedLine:
-    name = raw[:120]
-    return ParsedLine(LFK, {"name": name}, raw, f"🤸‍♂️ ЛФК: {raw[:40]}")
+    # Не обрезаем текст: пользователь должен видеть в подтверждении
+    # всю введённую строку целиком.
+    return ParsedLine(LFK, {"name": raw}, raw, f"🤸‍♂️ ЛФК: {raw}")
 
 
 def lfk_exercise_name(raw: str) -> str:
@@ -616,6 +628,7 @@ def lfk_exercise_name(raw: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     if s in ("лента", "резинка", "эспандер", "с лентой", "с резинкой", "с эспандером"):
         s = "с лентой/резинкой"
+    s = _HORIZ_HANG_RE.sub("горизонтальный вис", s)
     return s or raw.strip().lower()
 
 
@@ -638,9 +651,9 @@ def _exercise_line(low: str, raw: str) -> ParsedLine:
     if sets and reps and weight:
         volume = round(sets * reps * weight, 1)
     return ParsedLine(EXERCISE, {
-        "name": name[:120], "sets": sets, "reps": reps, "weight": weight,
+        "name": name, "sets": sets, "reps": reps, "weight": weight,
         "volume": volume, "detail": raw,
-    }, raw, f"💪 {name[:40]}")
+    }, raw, f"💪 {name}")
 
 
 # ------------------------------------------------------------------ button helpers

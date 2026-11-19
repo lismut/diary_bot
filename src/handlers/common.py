@@ -1,6 +1,7 @@
 """Общие утилиты для обработчиков: активный день, меню, применение записей."""
 from __future__ import annotations
 
+import html
 import logging
 from datetime import date, timedelta
 
@@ -14,7 +15,7 @@ from src.db import crud
 from src.services import parser as P
 from src.services import sections
 from src.services.reporter import ReportService
-from src.utils.helpers import format_date_ru
+from src.utils.helpers import format_date_ru, split_text
 
 logger = logging.getLogger(__name__)
 
@@ -138,8 +139,23 @@ def confirmation(day_date: date, applied: list[P.ParsedLine]) -> str:
         head += " <i>(не сегодня)</i>"
     lines = [head, ""]
     for it in applied:
-        lines.append(it.display)
+        lines.append(html.escape(it.display))
     return "\n".join(lines)
+
+
+async def answer_long(message: Message, text: str, **kwargs) -> None:
+    """Отвечает, разбивая слишком длинный текст на несколько сообщений.
+
+    Клавиатуру (если передана) вешаем только на последнюю часть, чтобы
+    кнопки не дублировались в каждом сообщении.
+    """
+    chunks = split_text(text)
+    markup = kwargs.pop("reply_markup", None)
+    for i, chunk in enumerate(chunks):
+        part = dict(kwargs)
+        if markup is not None and i == len(chunks) - 1:
+            part["reply_markup"] = markup
+        await message.answer(chunk, **part)
 
 
 async def add_items(bot, day_date: date, items: list[P.ParsedLine]) -> list[P.ParsedLine]:

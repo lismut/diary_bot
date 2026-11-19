@@ -36,6 +36,6 @@ async def on_text(message: Message):
     text = confirmation(d, applied)
     if any(it.category == P.SLEEP_TIME for it in applied):
         text += f"\n\n📅 Активный день: <b>{format_date_ru(d + timedelta(days=1))}</b>"
-    await message.answer(text, parse_mode="HTML")
+    await common.answer_long(message, text, parse_mode="HTML")
 
     await publish_sections_for(message.bot, d, applied, always_diary=True)
